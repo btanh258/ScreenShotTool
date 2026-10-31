@@ -2,7 +2,17 @@ name: tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+  # Reusable: the release workflow calls this so a build can never publish while
+  # the suite is red (v1.0.0 shipped with 3 failing tests because nothing gated it).
+  workflow_call:
+
+# Cancel an in-flight run when the same branch is pushed again: CI here takes
+# about a minute, and only the newest commit matters.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   unit-tests:
@@ -10,11 +20,19 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+
       - name: Run unit tests
+        # The UI tests need a real Tk display. windows-latest provides one, so
+        # nothing is skipped here. Set PYTHONIOENCODING because the UI strings
+        # are Vietnamese and the default console codec cannot encode them.
+        env:
+          PYTHONIOENCODING: utf-8
         run: python -m unittest discover -s tests -v

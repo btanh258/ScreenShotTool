@@ -1,0 +1,97 @@
+name: release
+
+# Builds the single-file exe and attaches it to a GitHub Release.
+#
+# Two ways to trigger it:
+#   * push a tag like v1.0.1
+#   * run it by hand from the Actions tab (workflow_dispatch)
+#
+# Either way it re-runs the full test suite first via `needs: unit-tests`, so a
+# release can no longer be published while the tests are failing — that is
+# exactly how v1.0.0 went out with 3 red tests.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to attach the build to (e.g. v1.0.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # Runs the whole suite as a prerequisite. If it fails, build-and-release is
+  # skipped and nothing is published.
+  unit-tests:
+    uses: ./.github/workflows/tests.yml
+
+  build-and-release:
+    needs: unit-tests
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build single-file exe
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name ScreenShotTool `
+            --icon icon_ScreenShotTool.ico `
+            --add-data "icon_ScreenShotTool.ico;." `
+            --collect-submodules pystray --collect-submodules PIL `
+            --hidden-import win32clipboard --hidden-import win32gui `
+            --hidden-import win32con --hidden-import win32api `
+            --hidden-import pystray._win32 --hidden-import keyboard `
+            --hidden-import cv2 --hidden-import numpy `
+            --exclude-module matplotlib --exclude-module pytest `
+            ScreenShotTool.pyw
+
+      - name: Smoke-test the binary
+        # A build that cannot start is worthless even if the tests pass, so the
+        # produced exe must survive ten seconds in a real process.
+        run: |
+          $p = Start-Process -FilePath ".\dist\ScreenShotTool.exe" -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) {
+            Write-Error "The built exe exited immediately (code $($p.ExitCode))."
+            exit 1
+          }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "The exe started and stayed alive."
+
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release with the exe attached
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          gh release create "$TAG" dist/ScreenShotTool.exe \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag 2>/dev/null \
+          || gh release upload "$TAG" dist/ScreenShotTool.exe \
+            --repo "${{ github.repository }}" --clobber

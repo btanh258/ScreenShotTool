@@ -473,10 +473,19 @@ class EditorConstructionTests(_TkTestCase):
 
     def setUp(self):
         super().setUp()
-        # Never let a test write the user's real config file.
-        self._config_patch = mock.patch.object(app, "CONFIG_FILE",
-                                              str(REPO / "_test_config_ignored.json"))
+        # Never let a test read or write the user's real config file.
+        #
+        # Patching CONFIG_FILE alone is not enough: load_config() also falls back
+        # to LEGACY_CONFIG_FILE (cwd/ScreenShotTool_config.json), so on a machine
+        # that has one of those lying around the editor read *that* file. The
+        # test then asserted whatever the developer's machine happened to
+        # contain and failed on CI, which has no such file. Both paths must be
+        # redirected to a nonexistent location so every run sees the defaults.
+        isolated = str(REPO / "_test_config_never_exists.json")
+        self._config_patch = mock.patch.object(app, "CONFIG_FILE", isolated)
         self._config_patch.start()
+        self._legacy_patch = mock.patch.object(app, "LEGACY_CONFIG_FILE", isolated)
+        self._legacy_patch.start()
         self._save_patch = mock.patch.object(app, "save_config", lambda cfg: None)
         self._save_patch.start()
         self.editor = app.ImageEditor(self.root, _sample_image())
@@ -490,6 +499,7 @@ class EditorConstructionTests(_TkTestCase):
             pass
         self.drain()
         self._save_patch.stop()
+        self._legacy_patch.stop()
         self._config_patch.stop()
         super().tearDown()
 
@@ -716,8 +726,13 @@ class EditorConstructionTests(_TkTestCase):
         self.drain()
         self.assertEqual(self.editor.cfg.get("color"), "#00ff88")
         self.assertEqual(self.editor.cfg.get("width"), 9)
-        self.assertEqual(self.editor.cfg.get("capture_hotkey"), "ALT+X",
-                         "editing the colour clobbered the capture hotkey")
+        # Compare case-insensitively: the stored spelling is either the default
+        # "Alt+X" or the normalised "ALT+X" depending on whether a config file
+        # existed, and both mean the same hotkey. The point of this assertion is
+        # that editing the colour did not clobber the hotkey at all.
+        self.assertEqual(
+            str(self.editor.cfg.get("capture_hotkey", "")).upper(), "ALT+X",
+            "editing the colour clobbered the capture hotkey")
 
     def test_random_color_and_pick_color_are_wired(self):
         original = self.editor.color_var.get()

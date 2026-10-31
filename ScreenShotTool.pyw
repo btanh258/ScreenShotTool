@@ -127,6 +127,10 @@ def toggle_startup(icon, item):
 def load_config():
     defaults = {
         "color": "#ff0000", "width": 4,
+        # The *display* default keeps the human spelling "Alt+X"; the Win32
+        # registrar upper-cases it itself via parse_hotkey. tests/test_transform.py
+        # pins this exact string, so it is a contract, not an implementation
+        # detail - do not "normalise" it here.
         "capture_hotkey": "Alt+X",
         "editor_hotkeys": {"undo": "Ctrl+Z", "redo": "Ctrl+Y", "delete": "Delete", "edit_text": "Double-click"},
     }
@@ -157,9 +161,32 @@ def load_config():
     return defaults
 
 def save_config(cfg):
+    """Persist the config atomically, so a crash mid-write cannot eat it.
+
+    Writing straight to CONFIG_FILE truncates it first: losing power or killing
+    the process between the truncate and the final flush left a zero-byte or
+    half-written JSON file behind, and the next launch silently reset every
+    setting to defaults. Writing to a sibling temp file and then os.replace()
+    (atomic on NTFS for same-volume renames) means the old file stays intact
+    until the new one is complete.
+    """
+    tmp_path = CONFIG_FILE + ".tmp"
     try:
-        with open(CONFIG_FILE, "w") as f: json.dump(cfg, f)
-    except: pass
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(cfg, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, CONFIG_FILE)
+    except Exception:
+        # Keep the app usable when the directory is read-only (e.g. the exe sits
+        # in Program Files) but make the failure visible in the log instead of
+        # swallowing it like the old bare `except: pass`.
+        logging.warning("Could not save config to %s", CONFIG_FILE, exc_info=True)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
 
 def send_to_clipboard(image):
     """Publish PNG and CF_DIB, retrying transient clipboard locks."""
@@ -387,7 +414,12 @@ class ImageEditor:
         for sequence, delta in (("<Left>", (-1, 0)), ("<Right>", (1, 0)), ("<Up>", (0, -1)), ("<Down>", (0, 1))):
             self.top.bind_all(sequence, lambda e, dx=delta[0], dy=delta[1]: (self.move_selected_by(dx * (10 if e.state & 0x0001 else 1), dy * (10 if e.state & 0x0001 else 1)), "break")[1])
         self.top.bind_all("<Return>", lambda e: (self.confirm_crop(), "break")[1] if self.tool_var.get() == "crop" else None)
-        self.top.bind_all("<Escape>", lambda e: (self.cancel_crop_or_text(), "break")[1])
+        # Escape is handled in one place, in priority order: cancel an in-progress
+        # crop/text edit first, otherwise dismiss a floating inspector. Keeping a
+        # second bind_all("<Escape>") further down looked correct but the one
+        # below returned "break", which stops Tk from running any later handler
+        # on the same tag - so the inspector dismissal was unreachable.
+        self.top.bind_all("<Escape>", self._on_escape)
         for index, value in enumerate(_TOOL_VALUES):
             key = "0" if index == 9 else str(index + 1)
             self.top.bind_all(f"<KeyPress-{key}>", lambda e, v=value: self._on_tool_hotkey(e, v))
@@ -415,10 +447,28 @@ class ImageEditor:
         # never fires an "after" script whose widget no longer exists.
         self.top.bind("<Destroy>", self._on_top_destroy, add="+")
 
-        # A floating inspector must never feel stuck: clicking the canvas or
-        # pressing Escape dismisses it, and the header gear brings it back.
         self.canvas.bind("<ButtonPress-1>", self._dismiss_inspector_overlay, add="+")
-        self.top.bind("<Escape>", self._dismiss_inspector_overlay, add="+")
+
+    def _on_escape(self, _event=None):
+        """Single Escape handler: cancel an active edit, else close the drawer.
+
+        ``cancel_crop_or_text`` returns nothing, so the state is snapshotted to
+        tell whether it actually did something: only an open text editor, a
+        pending crop, or a live selection count as "the key was consumed".
+        Otherwise Escape falls through to dismissing a floating inspector.
+        Returns None rather than "break" so other Escape bindings still run.
+        """
+        had_text = bool(self.text_entry)
+        had_crop = bool(getattr(self, "crop_pending", False))
+        had_selection = bool(self.selected_tag)
+        try:
+            self.cancel_crop_or_text()
+        except Exception:
+            logging.exception("cancel_crop_or_text failed")
+        consumed = had_text or had_crop or had_selection
+        if not consumed:
+            self._dismiss_inspector_overlay()
+        return None
 
     def _dismiss_inspector_overlay(self, _event=None):
         if not getattr(self, "_inspector_overlay", False):
@@ -1131,7 +1181,7 @@ class ImageEditor:
 
         if event.widget == self.color_btn:
             try: idx = self.palette.index(self.color_var.get())
-            except: idx = 0
+            except ValueError: idx = 0
             idx = (idx + 1) % len(self.palette) if delta > 0 else (idx - 1) % len(self.palette)
             self.color_var.set(self.palette[idx])
             self.color_btn.config(bg=self.palette[idx])
@@ -1744,7 +1794,7 @@ class ImageEditor:
                 
                 try: 
                     font = ImageFont.truetype("segoeui.ttf", font_size_px)
-                except: 
+                except OSError: 
                     font = ImageFont.load_default()
                 
                 fg_col, bg_col = self._text_colors(col, s.get('bg_enabled', False))
@@ -1759,7 +1809,7 @@ class ImageEditor:
                 # Vẽ chữ chuẩn mỏ neo "la" không cần offset_y
                 try:
                     draw.text((c[0], c[1]), s['text'], fill=fg_col, font=font, anchor="la")
-                except:
+                except (ValueError, TypeError):
                     draw.text((c[0], c[1]), s['text'], fill=fg_col, font=font)
                 
         return final
@@ -1976,7 +2026,7 @@ def create_tray_icon():
         # Sử dụng hàm resource_path để tìm đúng file icon
         icon_path = resource_path("icon_ScreenShotTool.ico")
         return Image.open(icon_path)
-    except:
+    except (OSError, ValueError):
         # Dự phòng: Nếu mất file ảnh thì tự vẽ lại ô màu xanh
         return Image.new('RGB', (64, 64), color="#0078D4")
 

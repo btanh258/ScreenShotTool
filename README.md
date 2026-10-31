@@ -1,6 +1,19 @@
 # ScreenShotTool
 
+[![tests](https://github.com/btanh258/ScreenShotTool/actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
+![Release](https://img.shields.io/github/v/release/btanh258/ScreenShotTool)
+![License](https://img.shields.io/github/license/btanh258/ScreenShotTool)
+
 ScreenShotTool là công cụ chụp màn hình cho Windows, viết bằng Python/Tkinter và Pillow. Ứng dụng chạy nền trong khay hệ thống, hỗ trợ phím tắt chụp nhanh, tự nhận diện cửa sổ/UI khi OpenCV khả dụng, sao chép ảnh vào clipboard và chỉnh sửa ảnh với annotation.
+
+![Editor với một chú thích chữ nhật đang vẽ](docs/screenshots/editor-annotated.png)
+
+*Editor: rail công cụ bên trái, inspector bên phải, canvas ở giữa với một hình chữ nhật đang được vẽ.*
+
+| | |
+|---|---|
+| ![Cửa sổ hẹp — inspector nổi thành drawer](docs/screenshots/editor-narrow.png) | ![Dialog thông tin và phím tắt](docs/screenshots/info-dialog.png) |
+| *Cửa sổ hẹp: inspector nổi thành drawer, có nút đóng* | *Dialog thông tin: phím tắt dạng nhóm* |
 
 ## Tải bản EXE
 
