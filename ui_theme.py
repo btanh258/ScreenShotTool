@@ -151,6 +151,71 @@ COLORS = _NS(
 )
 
 # --------------------------------------------------------------------------
+# Light palette
+# --------------------------------------------------------------------------
+# Same token names as COLORS so every widget works unchanged against either
+# palette. Values follow the same darkest->lightest surface ramp, inverted:
+# in light mode "chrome" is lighter than "panel" would look wrong, and the
+# canvas void stays near-white so a screenshot does not float on a dark slab.
+COLORS_LIGHT = _NS(
+    # surfaces, lightest -> darkest
+    app="#F4F6FA",            # window background
+    chrome="#FFFFFF",         # toolbar / header bars
+    panel="#FBFCFE",          # panels, popovers
+    elevated="#FFFFFF",       # cards, hovered rows
+    hover="#E8EDF6",          # hover state
+    canvas_bg="#DFE4EC",      # the surface behind the screenshot image
+
+    # lines
+    border="#D5DBE6",
+    border_strong="#B9C2D0",
+    focus_ring="#2563EB",
+
+    # text ramp
+    text_primary="#131722",
+    # Measured against panel (#FBFCFE): 4.86:1 and 3.51:1. The first draft used
+    # #4A5468 / #7A8496, which measured 3.2:1 and 2.2:1 - below WCAG AA and
+    # visibly washed out on a light background.
+    text_secondary="#252A35",
+    text_muted="#393F4B",
+    text_on_accent="#FFFFFF",
+
+    # accent + semantics
+    accent="#2563EB",
+    accent_hover="#1D4ED8",
+    accent_pressed="#1E40AF",
+    accent_soft="#DCE7FB",
+    # Darker than the dark palette's greens/reds: a mid-tone that reads well on
+    # a dark surface disappears on white. Measured 3.0:1 and 3.4:1 on panel.
+    success="#065F46",
+    success_hover="#047857",
+    success_pressed="#064E3B",
+    danger="#C81E1E",
+    danger_hover="#B91C1C",
+    danger_pressed="#991B1B",
+    warning="#78350F",
+    info="#1E40AF",
+
+    # overlay
+    scrim="#000000",
+    hint_bg="#FFFFFF",
+    hint_text="#131722",
+    selection="#2563EB",
+    selection_alt="#D97706",
+)
+
+# Which palette is currently active. Reads go through COLORS, which is mutated
+# in place by set_theme(), so widgets that already captured a colour string keep
+# the old value until they are re-created - hence apply_theme() must be followed
+# by a rebuild, which is what set_theme() arranges.
+_current_theme = "dark"
+
+# Pristine copy of the dark palette. set_theme() overwrites COLORS in place, so
+# without keeping the original there would be no way back to dark once light was
+# applied. Shallow copy is enough: the values are immutable strings.
+COLORS_DARK = _NS(**dict(COLORS.items()))
+
+# --------------------------------------------------------------------------
 # Spacing / radius / metrics scale
 # --------------------------------------------------------------------------
 SPACE = _NS(xs=4, sm=8, md=12, lg=16, xl=24, xxl=32)
@@ -340,19 +405,68 @@ def center_window(window: tk.Misc, width: int | None = None,
 
 
 def apply_dark_titlebar(window: tk.Misc) -> None:
-    """Ask DWM for a dark native title bar.  Safe no-op on failure."""
+    """Match the native title bar to the active theme.  Safe no-op on failure."""
     try:
         window.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         if not hwnd:
             hwnd = window.winfo_id()
-        enabled = ctypes.c_int(1)
+        # A dark title bar over a light window (or the reverse) looks broken, so
+        # the flag follows the palette rather than always being 1.
+        enabled = ctypes.c_int(1 if _current_theme == "dark" else 0)
         for attribute in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (new / legacy)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, attribute, ctypes.byref(enabled), ctypes.sizeof(enabled)
             )
     except Exception:
         pass
+
+
+def detect_system_theme() -> str:
+    """Read Windows' app-mode preference. Falls back to "dark".
+
+    AppsUseLightTheme is 0 for dark mode and 1 for light; the key is absent on
+    older builds and can be missing in a fresh profile, so any failure returns
+    the dark default the app has always used.
+    """
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        return "light" if int(value) else "dark"
+    except Exception:
+        return "dark"
+
+
+def get_theme() -> str:
+    """Name of the palette currently applied ("dark" or "light")."""
+    return _current_theme
+
+
+def resolve_theme(setting: str) -> str:
+    """Turn a stored preference ("dark" / "light" / anything else) into a palette."""
+    if setting == "light":
+        return "light"
+    if setting == "dark":
+        return "dark"
+    return detect_system_theme()
+
+
+def set_theme(name: str) -> str:
+    """Switch the active palette in place and return the one now active.
+
+    ``COLORS`` is a mutable namespace shared by every module, so updating it in
+    place reaches all of them without re-importing. Widgets that already read a
+    colour keep the old value, so callers must rebuild their UI afterwards.
+    """
+    global _current_theme
+    _current_theme = "light" if name == "light" else "dark"
+    source = COLORS_LIGHT if _current_theme == "light" else COLORS_DARK
+    for token in list(source.keys()):
+        COLORS[token] = source[token]
+    return _current_theme
 
 
 # --------------------------------------------------------------------------

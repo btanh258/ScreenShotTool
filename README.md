@@ -53,13 +53,29 @@ Biểu tượng `icon_ScreenShotTool.ico` phải nằm cạnh mã nguồn. Một
 - Click vào một cửa sổ hoặc vùng UI được nhận diện để chụp nhanh vùng đó.
 - Di chuyển chuột để xem kính lúp và đường căn chỉnh.
 - `Esc`: hủy lần chụp hiện tại.
-- Ảnh sau khi chụp được sao chép vào clipboard nếu clipboard khả dụng. Toast kết quả cho phép mở ảnh trong editor.
+- `Enter`: chụp toàn bộ màn hình đang trỏ tới, không cần kéo chuột.
+- `Space`: chụp cửa sổ đang nằm dưới con trỏ.
+- Ảnh sau khi chụp được sao chép vào clipboard nếu clipboard khả dụng. Toast kết quả cho phép mở ảnh trong editor hoặc **ghim** ảnh lên màn hình.
 
 #### Chụp có hẹn giờ
 
 Menu khay → **Chụp sau** → chọn *3 giây* / *5 giây* / *10 giây*.
 
 Hữu ích khi cần mở menu, chờ tooltip hiện, hoặc chờ animation chạy xong trước khi ảnh được "đóng băng". Phím tắt `Alt+X` luôn chụp ngay lập tức — hẹn giờ là đường chủ động.
+
+#### Ghim ảnh lên màn hình
+
+Bấm **Ghim** trên toast kết quả (hoặc mở ảnh rồi dùng cùng nút) để giữ ảnh trong một cửa sổ không viền, luôn nổi trên các cửa sổ khác. Dùng để đối chiếu ảnh tham chiếu với nội dung đang làm.
+
+- Kéo chuột để di chuyển.
+- Lăn chuột để đổi độ mờ (25%–100%).
+- Nháy đúp, `Esc`, hoặc chuột phải để đóng.
+
+#### Ảnh gần đây
+
+Mỗi lần chụp đều được lưu một bản PNG vào `%APPDATA%\ScreenShotTool\history\`. Menu khay → **Ảnh gần đây** liệt kê 8 ảnh mới nhất; chọn một ảnh để mở lại trong editor. Chỉ giữ **20 ảnh gần nhất** — ảnh cũ hơn tự động bị xóa, nên thư mục không phình ra.
+
+Tính năng này cứu bạn khi lỡ tay chụp đè hoặc đóng editor trước khi lưu. Chọn **Xoá lịch sử ảnh** trong cùng menu để dọn sạch.
 
 ### Menu khay hệ thống
 
@@ -68,6 +84,9 @@ Hữu ích khi cần mở menu, chờ tooltip hiện, hoặc chờ animation ch�
 | Chụp màn hình (`Alt+X`) | Chụp ngay |
 | Chụp sau | Chụp hẹn giờ 3/5/10 giây |
 | Khởi động cùng Windows | Bật/tắt tự chạy khi đăng nhập |
+| Giao diện | Chọn *Theo Windows* / *Tối* / *Sáng* |
+| Mở ảnh… (`Ctrl+O`) | Mở file ảnh có sẵn trong editor |
+| Ảnh gần đây | Mở lại ảnh vừa chụp, hoặc xóa lịch sử |
 | Kiểm tra cập nhật | Hỏi GitHub xem có bản mới |
 | Giới thiệu (v…) | Bảng phím tắt và phiên bản |
 | Thoát | Thoát hoàn toàn |
@@ -95,7 +114,9 @@ Các thao tác khác trên toolbar gồm đổi màu, đổi độ dày nét, b�
 | `Ctrl+Z` | Hoàn tác |
 | `Ctrl+Y` | Làm lại |
 | `Ctrl+C` | Sao chép ảnh kết quả vào clipboard |
-| `Ctrl+S` | Lưu ảnh PNG/JPEG |
+| `Ctrl+S` | Lưu ảnh PNG / WebP / JPEG / BMP |
+| `Ctrl+O` | Mở một file ảnh khác |
+| `Ctrl+0` | Thu phóng vừa khung |
 | `Delete` | Xóa annotation đang chọn |
 | Mũi tên | Di chuyển object hoặc nhóm 1 pixel |
 | `Shift` + Mũi tên | Di chuyển object hoặc nhóm 10 pixel |
@@ -107,22 +128,29 @@ Có thể thay đổi phím tắt trong **Info → Gán phím tắt**. Tổ hợ
 ### Lưu và chia sẻ
 
 - Nhấn **Copy** trong editor để đưa ảnh vào clipboard dưới dạng PNG và DIB.
-- Nhấn **Lưu** để xuất PNG hoặc JPEG.
+- Nhấn **Lưu** để xuất **PNG**, **WebP**, **JPEG** hoặc **BMP** — đuôi file bạn chọn quyết định định dạng.
+  - **WebP** lưu không mất dữ liệu và giữ trong suốt; ảnh chụp màn hình thường nhỏ hơn PNG khoảng 90%, rất tiện khi gửi qua chat hoặc email.
+  - **JPEG** và **BMP** không có kênh trong suốt, nên vùng trong suốt được trộn lên nền trắng thay vì thành màu đen.
+- Mở lại ảnh có sẵn bằng **Ctrl+O** hoặc menu khay → **Mở ảnh…**.
 - Sau khi lật/xoay, annotation được cập nhật theo ảnh và vẫn có thể chọn/di chuyển. Text có thể được rasterize thành bitmap sau một số phép biến đổi.
-- Menu tray có tùy chọn khởi động cùng Windows.
+
+Khi mở ảnh, editor tự thu phóng **vừa khung** (không bao giờ phóng to ảnh nhỏ hơn khung). Nút `⤢` hoặc `Ctrl+0` để vừa lại khung bất cứ lúc nào.
 
 ## Giao diện
 
 Giao diện được cải tổ theo một hệ thống thiết kế riêng, không dùng widget mặc định của Tkinter:
 
-- `ui_theme.py` - token thiết kế (màu, khoảng cách, bo góc, font, glyph) và engine style cho ttk.
+- `ui_theme.py` - token thiết kế (màu, khoảng cách, bo góc, font, glyph), engine style cho ttk, và hai bảng màu tối/sáng.
 - `ui_widgets.py` - bộ component tự vẽ trên Canvas: nút, segmented control, slider, switch, color swatch, status bar... để có bo tròn và trạng thái hover/pressed/disabled.
 - `ui_capture.py` - lớp phủ chụp màn hình và toast kết quả.
 - `ui_dialogs.py` - dialog thông tin, phím tắt và hướng dẫn.
+- `ui_extras.py` - lịch sử ảnh gần đây và cửa sổ ghim ảnh nổi.
 
 Editor dùng bố cục ba vùng: header (thao tác chính), rail dọc bên trái (10 công cụ, có tooltip kèm phím tắt), inspector bên phải (Lịch sử / Nét vẽ / Màu sắc / Văn bản / Thu phóng / Biến đổi), canvas ở giữa và thanh trạng thái ở dưới.
 
 **Responsive:** ở cửa sổ hẹp (dưới 1180px) bảng thuộc tính chuyển thành drawer nổi bên phải thay vì bị ẩn, nên mọi điều khiển vẫn truy cập được ở mọi kích thước cửa sổ (tối thiểu 760×520). Đóng drawer bằng nút ×, phím `Esc`, hoặc click vào canvas; mở lại bằng nút bánh răng trên header.
+
+**Sáng / tối:** mặc định bám theo thiết lập *Chế độ ứng dụng* của Windows. Đổi thủ công ở menu khay → **Giao diện**. Lựa chọn được lưu vào file cấu hình và áp dụng từ lần mở cửa sổ tiếp theo — Tkinter gắn màu vào widget lúc tạo, nên đổi màu cửa sổ đang mở sẽ cần dựng lại toàn bộ. Bảng màu sáng đã được kiểm tra độ tương phản WCAG AA (chữ chính ≥ 4.5:1, chữ phụ ≥ 3:1) bằng test tự động.
 
 ## Đóng gói EXE
 
@@ -139,7 +167,7 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed `
   --hidden-import win32con --hidden-import win32api `
   --hidden-import pystray._win32 --hidden-import keyboard `
   --hidden-import cv2 --hidden-import numpy `
-  --hidden-import ui_editor_io --hidden-import ui_updates `
+  --hidden-import ui_editor_io --hidden-import ui_updates --hidden-import ui_extras `
   --exclude-module matplotlib --exclude-module pytest `
   ScreenShotTool.pyw
 ```
@@ -170,7 +198,7 @@ python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-Bộ test gồm **236 test**:
+Bộ test gồm **269 test**:
 
 | File | Số test | Nội dung |
 |---|---|---|
@@ -178,6 +206,7 @@ Bộ test gồm **236 test**:
 | `tests/test_ui_parity.py` | 86 | Hệ thống thiết kế: token, helper màu, component, hành vi widget |
 | `tests/test_ui_smoke.py` | 71 | Tích hợp trên ứng dụng thật: contract, đường dẫn sự kiện, wiring dialog |
 | `tests/test_runtime_paths.py` | 39 | Đường lỗi: config hỏng/thiếu, clipboard khoá, registry, thiếu icon, hotkey bị chiếm |
+| `tests/test_ui_features.py` | 33 | Undo copy-on-write + ngân sách bộ nhớ, fit-to-window, debounce resize, 4 định dạng xuất, lịch sử ảnh, ghim ảnh, đổi theme + tương phản WCAG |
 | `tests/test_updates.py` | 17 | So sánh phiên bản, xử lý lỗi mạng, callback nền |
 | `tests/test_multi_monitor.py` | 11 | Toạ độ đa màn hình (gốc âm), snapping cửa sổ, DPI awareness |
 
@@ -205,8 +234,13 @@ Báo cáo kiểm định độc lập: [`docs/REDESIGN_VERIFICATION.md`](docs/RE
 
 | Đường dẫn | Nội dung |
 |---|---|
-| `%APPDATA%\ScreenShotTool\ScreenShotTool_config.json` | Cấu hình (màu, độ dày, phím tắt) |
+| `%APPDATA%\ScreenShotTool\ScreenShotTool_config.json` | Cấu hình (màu, độ dày, phím tắt, giao diện sáng/tối) |
 | `%APPDATA%\ScreenShotTool\ScreenShotTool.log` | Log, tự cắt vòng ở ~1 MB |
+| `%APPDATA%\ScreenShotTool\history\` | 20 ảnh chụp gần nhất (tự tạo khi chụp lần đầu) |
+
+File cấu hình đọc được cả khi có BOM UTF-8 (Notepad và PowerShell đều ghi BOM), nên sửa tay bằng Notepad không làm mất cài đặt.
+
+Menu khay → **Ảnh gần đây** → **Xoá lịch sử ảnh** để dọn thư mục `history\` bất cứ lúc nào.
 
 Nếu có file `ScreenShotTool_config.json` **nằm cạnh file exe**, bản portable đó được ưu tiên — tiện mang theo USB. Cấu hình cũ (cạnh exe hoặc trong thư mục làm việc) vẫn được đọc khi nâng cấp, nên không mất cài đặt.
 

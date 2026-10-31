@@ -76,8 +76,34 @@ jobs:
             --hidden-import pystray._win32 --hidden-import keyboard `
             --hidden-import cv2 --hidden-import numpy `
             --hidden-import ui_editor_io --hidden-import ui_updates `
+            --hidden-import ui_extras `
             --exclude-module matplotlib --exclude-module pytest `
             ScreenShotTool.pyw
+
+      - name: Verify every project module is inside the exe
+        shell: pwsh
+        run: |
+          # A missing --hidden-import does not fail the build: PyInstaller just
+          # omits the module and the exe crashes with ModuleNotFoundError at the
+          # first use. ui_extras was in exactly that state, so assert it here
+          # rather than discovering it when a user clicks "Anh gan day".
+          python -m pip install --quiet pyinstaller
+          python -c @'
+          import os, sys, tempfile
+          from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
+          arc = CArchiveReader("dist/ScreenShotTool.exe")
+          tmp = os.path.join(tempfile.gettempdir(), "pyz.pyz")
+          with open(tmp, "wb") as fh:
+              fh.write(arc.extract("PYZ.pyz"))
+          toc = ZlibArchiveReader(tmp).toc
+          os.remove(tmp)
+          required = ["ui_extras", "ui_editor_io", "ui_updates", "ui_theme",
+                      "ui_widgets", "ui_capture", "ui_dialogs"]
+          missing = [name for name in required if name not in toc]
+          if missing:
+              sys.exit("missing from the exe: " + ", ".join(missing))
+          print("all %d project modules bundled" % len(required))
+          '@
 
       - name: Sign the exe
         if: steps.signing.outputs.present == 'true'

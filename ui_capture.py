@@ -247,12 +247,18 @@ class SnippingTool:
     WINDOW_MIN_SIZE = 40     # smallest window DWM rect worth snapping to
 
     def __init__(self, root, *, resource_path=None, send_to_clipboard=None,
-                 open_editor=None, keyboard_module=None):
+                 open_editor=None, keyboard_module=None, on_capture_stored=None,
+                 on_pin=None):
         self.root = root
         self._resource_path = resource_path or _default_resource_path
         self._send_to_clipboard = send_to_clipboard or _default_send_to_clipboard
         self._open_editor = open_editor
         self._keyboard = _resolve_keyboard(keyboard_module)
+        # Called with every finished capture, before the toast appears; the
+        # application uses it to keep the recent-captures folder up to date.
+        self.on_capture_stored = on_capture_stored
+        # Called with the image when the user asks to pin it on screen.
+        self._pin_image = on_pin
 
         # -- public state (contract section 4) ------------------------------
         self.is_active = False
@@ -302,6 +308,12 @@ class SnippingTool:
         # Declared to keep the legacy binding surface; double-click is a no-op.
         self.canvas.bind("<Double-Button-1>", self.on_double_click)
         self.canvas.bind("<Escape>", self.cancel_snip)
+        # Keyboard-only capture. Dragging a precise region is not always what the
+        # user wants, and reaching for the mouse defeats the point of a hotkey:
+        # Enter takes the whole screen, Space takes the window under the cursor.
+        self.canvas.bind("<Return>", self.capture_full_screen)
+        self.canvas.bind("<KP_Enter>", self.capture_full_screen)
+        self.canvas.bind("<space>", self.capture_focused_window)
 
     # ------------------------------------------------------------------
     # Smart rect detection
@@ -534,6 +546,45 @@ class SnippingTool:
         except tk.TclError:
             pass
 
+    def capture_full_screen(self, event=None):
+        """Enter: take the entire captured desktop.
+
+        ``snip_state`` only becomes 1 after the first mouse press, so a keyboard
+        capture has to force it: otherwise finish_snip() returns immediately and
+        the key appears dead. The overlay is only alive while a capture is in
+        progress, so forcing it here cannot fire outside capture mode.
+        """
+        if self.full_img is None:
+            self.cancel_snip()
+            return "break"
+        self.snip_state = 1
+        self.finish_snip(0, 0, self.full_img.width, self.full_img.height)
+        return "break"
+
+    def capture_focused_window(self, event=None):
+        """Space: take the window under the cursor, or the whole screen.
+
+        ``window_rects`` holds ``(x1, y1, x2, y2)`` bounds ordered top-most
+        first, so the first rect containing the cursor is the window the user is
+        pointing at. Falling back to full screen keeps the key useful when the
+        cursor sits on bare desktop.
+        """
+        if self.full_img is None:
+            self.cancel_snip()
+            return "break"
+        self.snip_state = 1
+        try:
+            cx = self.root.winfo_pointerx() - self.root.winfo_rootx()
+            cy = self.root.winfo_pointery() - self.root.winfo_rooty()
+        except tk.TclError:
+            cx = cy = -1
+        for x1, y1, x2, y2 in getattr(self, "window_rects", []):
+            if x1 <= cx < x2 and y1 <= cy < y2:
+                self.finish_snip(x1, y1, x2, y2)
+                return "break"
+        self.finish_snip(0, 0, self.full_img.width, self.full_img.height)
+        return "break"
+
     # ------------------------------------------------------------------
     # Drawing helpers
     # ------------------------------------------------------------------
@@ -567,7 +618,8 @@ class SnippingTool:
         if self.full_img is None:
             return
         screen_w, screen_h = self.full_img.width, self.full_img.height
-        text = "Kéo chuột để chọn vùng · Click để chụp cửa sổ · Esc để hủy"
+        text = ("Kéo chuột chọn vùng · Click chụp cửa sổ · "
+                "Enter chụp cả màn hình · Esc hủy")
         fnt = T.FONTS.small
         text_w = W.measure_text(fnt, text)
         pad_x, height = 18, 34
@@ -911,11 +963,20 @@ class SnippingTool:
                 self.current_toast.destroy()
             except Exception:
                 pass
+        # Record the capture before the toast: the toast can be dismissed or the
+        # app can exit, and the history is what makes a mistaken capture
+        # recoverable after the editor is gone.
+        if self.on_capture_stored is not None:
+            try:
+                self.on_capture_stored(cropped_img)
+            except Exception:
+                log.exception("capture history callback failed")
         toast = ResultToast(
             self.root,
             cropped_img,
             copied=copied,
             on_open_editor=self._open_editor,
+            on_pin=getattr(self, "_pin_image", None),
             resource_path=self._resource_path,
         )
         self.current_toast = toast
@@ -942,11 +1003,12 @@ class ResultToast:
     _CONTENT_X = 112
 
     def __init__(self, root, image, *, copied=True, on_open_editor=None,
-                 resource_path=None, duration=6000):
+                 on_pin=None, resource_path=None, duration=6000):
         self.root = root
         self.image = image
         self.copied = bool(copied)
         self.on_open_editor = on_open_editor
+        self.on_pin = on_pin
         self.resource_path = resource_path
         self.duration = int(duration) if duration and duration > 0 else 6000
 
@@ -1166,6 +1228,19 @@ class ResultToast:
                              window=dismiss)
         self._buttons.extend([action, dismiss])
 
+        # Pin is only offered when a handler is wired; a button that does
+        # nothing is worse than no button.
+        if self.on_pin is not None:
+            pin = W.PillButton(
+                canvas, "Ghim", command=self._pin,
+                variant="ghost", fontspec=T.FONTS.small_strong, padx=14,
+                height=28, surface=T.COLORS.panel)
+            dismiss_width = dismiss.winfo_reqwidth()
+            canvas.create_window(
+                action_x + action_width + dismiss_width + 16, action_y,
+                anchor="nw", window=pin)
+            self._buttons.append(pin)
+
         # -- auto-dismiss progress track --------------------------------------
         track_y = screen_h - 12
         T.round_rect(canvas, 16, track_y, screen_w - 16, track_y + 4, 2,
@@ -1279,6 +1354,18 @@ class ResultToast:
         self._tick_id = self._schedule(self.TICK_MS, self._tick)
 
     # -- actions -----------------------------------------------------------
+    def _pin(self, _event=None):
+        """Keep this capture floating on screen, then close the toast."""
+        callback = self.on_pin
+        image = self.image
+        self.destroy()
+        if not callable(callback):
+            return
+        try:
+            callback(image)
+        except Exception:
+            log.exception("pin callback failed")
+
     def _open_editor(self, _event=None):
         callback = self.on_open_editor
         image = self.image

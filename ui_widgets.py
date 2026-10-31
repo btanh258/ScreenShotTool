@@ -62,6 +62,9 @@ class Tooltip:
 
     _open: "Tooltip | None" = None
     _delay = 420
+    # Hints can be a full sentence ("kéo vùng cần giữ · Enter để cắt"), so the
+    # label wraps instead of running off the edge of the screen.
+    _wrap = 340
 
     def __init__(self, widget, text, *, delay=None, placement="right"):
         self.widget = widget
@@ -111,7 +114,9 @@ class Tooltip:
         frame.pack()
         label = tk.Label(frame, text=self.text, bg=T.COLORS.elevated,
                          fg=T.COLORS.text_primary, font=T.FONTS.small,
-                         padx=10, pady=6, justify="left")
+                         padx=10, pady=6, justify="left", anchor="w",
+                         wraplength=Tooltip._wrap, borderwidth=0,
+                         highlightthickness=0)
         label.pack(padx=1, pady=1)
         tip.update_idletasks()
         w, h = tip.winfo_reqwidth(), tip.winfo_reqheight()
@@ -324,18 +329,28 @@ class IconButton(T.ThemedBase):
 class PillButton(T.ThemedBase):
     """Rounded text button.  Variants: primary, secondary, ghost, danger, success."""
 
-    _VARIANTS = {
-        "primary": (T.COLORS.accent, T.COLORS.text_on_accent,
-                    T.COLORS.accent_hover, T.COLORS.accent_pressed, None),
-        "success": (T.COLORS.success, T.COLORS.text_on_accent,
-                    T.COLORS.success_hover, T.COLORS.success_pressed, None),
-        "danger": (T.COLORS.danger, T.COLORS.text_on_accent,
-                   T.COLORS.danger_hover, T.COLORS.danger_pressed, None),
-        "secondary": (T.COLORS.elevated, T.COLORS.text_primary,
-                      T.COLORS.hover, T.COLORS.border, T.COLORS.border_strong),
-        "ghost": (None, T.COLORS.text_secondary,
-                  T.COLORS.hover, T.COLORS.border, None),
-    }
+    @staticmethod
+    def _variants():
+        """Variant colours, resolved at call time.
+
+        This used to be a class-level dict. Class bodies run once at import, so
+        every button built afterwards kept the palette that happened to be
+        active then - in light mode the Save button rendered as a dark slab
+        because it was bound to the dark "secondary" fill. Reading the tokens per
+        call keeps buttons in step with the active theme.
+        """
+        return {
+            "primary": (T.COLORS.accent, T.COLORS.text_on_accent,
+                        T.COLORS.accent_hover, T.COLORS.accent_pressed, None),
+            "success": (T.COLORS.success, T.COLORS.text_on_accent,
+                        T.COLORS.success_hover, T.COLORS.success_pressed, None),
+            "danger": (T.COLORS.danger, T.COLORS.text_on_accent,
+                       T.COLORS.danger_hover, T.COLORS.danger_pressed, None),
+            "secondary": (T.COLORS.elevated, T.COLORS.text_primary,
+                          T.COLORS.hover, T.COLORS.border, T.COLORS.border_strong),
+            "ghost": (None, T.COLORS.text_secondary,
+                      T.COLORS.hover, T.COLORS.border, None),
+        }
 
     def __init__(self, master, text="", command=None, *, variant="secondary",
                  glyph=None, fontspec=None, padx=16, height=None, tooltip=None,
@@ -391,8 +406,9 @@ class PillButton(T.ThemedBase):
     def _render(self):
         self.delete("all")
         w, h = int(self.winfo_reqwidth()), int(self.winfo_reqheight())
-        base, fg, hover, pressed, border = self._VARIANTS.get(
-            self.variant, self._VARIANTS["secondary"])
+        variants = self._variants()
+        base, fg, hover, pressed, border = variants.get(
+            self.variant, variants["secondary"])
         bg = base if base else self._surface
         outline = border or ""
         if not self._is_enabled():

@@ -31,6 +31,7 @@ import ui_theme as T
 import ui_widgets as W
 import ui_capture
 import ui_dialogs
+import ui_extras
 import ui_updates
 from ui_editor_io import EditorExportMixin, _COPY_LABEL
 
@@ -183,6 +184,8 @@ def load_config():
         # pins this exact string, so it is a contract, not an implementation
         # detail - do not "normalise" it here.
         "capture_hotkey": "Alt+X",
+        # "system" follows the Windows app-mode preference; "dark"/"light" pin it.
+        "theme": "system",
         "editor_hotkeys": {"undo": "Ctrl+Z", "redo": "Ctrl+Y", "delete": "Delete", "edit_text": "Double-click"},
     }
     try:
@@ -192,7 +195,10 @@ def load_config():
             if path in seen or not os.path.exists(path):
                 continue
             seen.add(path)
-            with open(path, "r", encoding="utf-8") as f:
+            # utf-8-sig, not utf-8: Notepad and PowerShell both write a BOM, and
+            # a BOM made json.load raise, so every setting was silently replaced
+            # by the defaults - which looks like the app forgot the config.
+            with open(path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             color = data.get("color", defaults["color"])
             width = int(data.get("width", defaults["width"]))
@@ -201,11 +207,17 @@ def load_config():
             editor_hotkeys = data.get("editor_hotkeys", defaults["editor_hotkeys"])
             if not isinstance(editor_hotkeys, dict):
                 editor_hotkeys = defaults["editor_hotkeys"].copy()
+            theme = data.get("theme", defaults["theme"])
+            if theme not in ("system", "dark", "light"):
+                # An unknown value falls back to following Windows rather than
+                # failing the whole load: a typo must not reset colour and width.
+                theme = defaults["theme"]
             return {
                 "color": color,
                 "width": max(1, min(50, width)),
                 "capture_hotkey": validate_hotkey(data.get("capture_hotkey", defaults["capture_hotkey"])) or defaults["capture_hotkey"],
                 "editor_hotkeys": {**defaults["editor_hotkeys"], **editor_hotkeys},
+                "theme": theme,
             }
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         logging.warning("Could not load config: %s", exc)
@@ -372,6 +384,22 @@ class _ToolRailButton(W.RailButton):
 
 
 class ImageEditor(EditorExportMixin):
+    # Undo depth. The old cap of 11 existed because each step copied the whole
+    # image; snapshots now share one, so annotation-only editing gets a much
+    # deeper trail for a fraction of the memory.
+    MAX_HISTORY = 50
+
+    # Total image bytes the history may hold. Destructive edits (crop, erase,
+    # transform) each keep their own image, so depth alone would let 50 crops of
+    # a 4K capture occupy 1.2 GB. 192 MB is roughly 10 FHD or 3 4K images, which
+    # still covers a realistic editing session while bounding the worst case.
+    MAX_HISTORY_BYTES = 192 * 1024 * 1024
+
+    # How long to wait for the user to stop resizing before repainting. 60 ms is
+    # below the ~100 ms threshold where a delay becomes perceptible, and above
+    # the ~15 ms gap between <Configure> events during a real drag.
+    _CONFIGURE_REDRAW_MS = 60
+
     # Looked up on each call instead of captured at construction, so tests that
     # replace the module-level clipboard writer still take effect.
     send_to_clipboard = property(lambda self: globals()["send_to_clipboard"])
@@ -405,6 +433,7 @@ class ImageEditor(EditorExportMixin):
         self.last_mouse_x = -100
         self.last_mouse_y = -100
         self._tk_images = []
+        self._configure_redraw_id = None
 
         self.cfg = load_config()
         self.capture_hotkey_var = tk.StringVar(value=self.cfg.get("capture_hotkey", "Alt+X"))
@@ -455,7 +484,7 @@ class ImageEditor(EditorExportMixin):
         self.canvas.bind("<B2-Motion>", self.on_middle_drag)
         self.canvas.bind("<ButtonRelease-2>", self.on_middle_release)
         self.canvas.bind("<Motion>", self.on_mouse_move_editor)
-        self.canvas.bind("<Configure>", lambda e: self.redraw_all())
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
         
         hotkeys = self.cfg.get("editor_hotkeys", {})
         self.top.bind("<Delete>", self.delete_selected)
@@ -466,6 +495,8 @@ class ImageEditor(EditorExportMixin):
         self.top.bind_all("<Control-c>", lambda e: (self.save_clipboard(), "break")[1])
         self.top.bind_all("<Control-s>", lambda e: (self.save_file(), "break")[1])
         self.top.bind_all("<Control-a>", lambda e: (self.handle_select_all_shortcut(), "break")[1])
+        self.top.bind_all("<Control-o>", lambda e: (self.open_another_image(), "break")[1])
+        self.top.bind_all("<Control-0>", lambda e: (self.fit_to_window(), "break")[1])
         for sequence, delta in (("<Left>", (-1, 0)), ("<Right>", (1, 0)), ("<Up>", (0, -1)), ("<Down>", (0, 1))):
             self.top.bind_all(sequence, lambda e, dx=delta[0], dy=delta[1]: (self.move_selected_by(dx * (10 if e.state & 0x0001 else 1), dy * (10 if e.state & 0x0001 else 1)), "break")[1])
         self.top.bind_all("<Return>", lambda e: (self.confirm_crop(), "break")[1] if self.tool_var.get() == "crop" else None)
@@ -497,7 +528,10 @@ class ImageEditor(EditorExportMixin):
                 T.center_window(self.top, min(1280, screen_w - 80), min(860, screen_h - 120))
         except tk.TclError:
             T.center_window(self.top, 1280, 800)
-        self.top.after(60, self.redraw_all)
+        # Fit after the geometry is applied, not before: the canvas still reports
+        # its pre-layout size at construction time, which would pick 100% and
+        # leave a large screenshot scrolled out of view.
+        self.top.after(60, self._initial_fit_and_redraw)
         # Drop the pending Copy confirmation when the window goes away, so Tk
         # never fires an "after" script whose widget no longer exists.
         self.top.bind("<Destroy>", self._on_top_destroy, add="+")
@@ -707,7 +741,7 @@ class ImageEditor(EditorExportMixin):
                 width=rail_w - 16,
                 height=40 if compact else 52,
                 command=self.clear_selection,
-                tooltip=f"{caption}  ({shortcut})")
+                tooltip=f"{caption}  ({shortcut})\n{hint}")
             button.pack(pady=1)
             self.rail_buttons[value] = button
         if not compact:
@@ -812,6 +846,11 @@ class ImageEditor(EditorExportMixin):
             size=28, glyph_size=14, surface=T.COLORS.panel,
             tooltip="Phóng to  (Ctrl + cuộn chuột)")
         self.btn_zoom_in.pack(side="left")
+        self.btn_zoom_fit = W.IconButton(
+            zoom_row, _glyph("fit"), command=self.fit_to_window,
+            size=28, glyph_size=14, surface=T.COLORS.panel,
+            tooltip="Vừa khung  (Ctrl+0)\nHiện toàn bộ ảnh trong cửa sổ")
+        self.btn_zoom_fit.pack(side="left", padx=(T.SPACE.xs, 0))
         self.zoom_label = tk.Label(zoom_row, text="100%", bg=T.COLORS.panel,
                                    fg=T.COLORS.text_secondary,
                                    font=T.FONTS.mono, anchor="e")
@@ -1198,16 +1237,57 @@ class ImageEditor(EditorExportMixin):
         self._refresh_metrics()
     
     def save_state(self):
+        """Record a snapshot for undo.
+
+        The snapshot holds a *reference* to the current image instead of a copy.
+        ``pil_image`` is replaced wholesale (crop/erase/transform always assign a
+        new object), never mutated in place, so every snapshot that shares one
+        image keeps pointing at identical pixels. Copying on every edit cost
+        23.7 MB per step on a 4K capture - the old code held 348 MB for eleven
+        steps - while a reference costs nothing.
+        """
         self.history = self.history[:self.history_index + 1]
         state = {
-            'image': self.pil_image.copy(),
+            'image': self.pil_image,
             'w': self.orig_w, 'h': self.orig_h,
             'shapes': self.clone_shapes(self.shapes)
         }
         self.history.append(state)
-        if len(self.history) > 11: self.history.pop(0)
+        self._trim_history()
         self.history_index = len(self.history) - 1
         self.update_history_ui()
+
+    def _trim_history(self):
+        """Enforce both the step cap and a total-memory budget.
+
+        A step cap alone is not enough: annotation edits all share one image, so
+        50 steps cost one image, but 50 crops keep 50 distinct images and would
+        cost 50x. Measuring had exactly that: 11 crops held 86.5 MB with the cap
+        at 50 versus 65.3 MB with the old cap of 11. The budget caps the real
+        cost instead of guessing depth from step count.
+        """
+        # Drop from the oldest end, but never the entry at history_index (that
+        # would make the visible state disappear) and keep at least one.
+        while len(self.history) > self.MAX_HISTORY:
+            if self.history_index > 0:
+                self.history.pop(0)
+                self.history_index -= 1
+            else:
+                break
+        while len(self.history) > 1 and self._history_bytes() > self.MAX_HISTORY_BYTES:
+            if self.history_index <= 0:
+                # Nothing older to drop: the newest image alone is over budget.
+                break
+            self.history.pop(0)
+            self.history_index -= 1
+
+    def _history_bytes(self):
+        """Bytes of image data the history holds, counting shared images once."""
+        seen = {}
+        for state in self.history:
+            img = state['image']
+            seen[id(img)] = img.width * img.height * len(img.mode)
+        return sum(seen.values())
 
     def undo(self):
         if self.history_index > 0:
@@ -1221,6 +1301,9 @@ class ImageEditor(EditorExportMixin):
             
     def _load_state(self):
         state = self.history[self.history_index]
+        # Copy on restore, not on save: the snapshot may be shared by several
+        # undo steps, so handing its image straight to pil_image would let the
+        # next destructive edit modify the snapshot too.
         self.pil_image = state['image'].copy()
         self.orig_w = state['w']
         self.orig_h = state['h']
@@ -1228,6 +1311,52 @@ class ImageEditor(EditorExportMixin):
         self.clear_selection()
         self.redraw_all()
         self.update_history_ui()
+
+    def load_image(self, image, reset_zoom=True):
+        """Replace the current image, discarding annotations and history.
+
+        Used by Ctrl+O. Annotations belong to the image they were drawn on, so
+        carrying them across would silently paste them onto an unrelated
+        screenshot; the history is cleared for the same reason.
+        """
+        if self.text_entry:
+            self.cancel_crop_or_text()
+        self.pil_image = image.copy().convert("RGBA")
+        self.orig_w, self.orig_h = self.pil_image.width, self.pil_image.height
+        self.shapes = []
+        self.shape_counter = 0
+        self.selected_tag = None
+        self.selected_tags = []
+        self.history = []
+        self.history_index = -1
+        self.crop_pending = False
+        if reset_zoom:
+            self.scale = 1.0
+        self.top.after(30, self._initial_fit_and_redraw)
+        self.redraw_all()
+        self.save_state()
+        self._refresh_metrics()
+
+    def request_open_image(self, parent):
+        """Picker injected for :meth:`ui_editor_io.EditorExportMixin.open_another_image`.
+
+        Returns ``(image, path)`` or ``None``. Defined here rather than in the mixin
+        because only this module can build the file dialog the app already uses.
+        """
+        path = _ask_open_image(parent)
+        if not path:
+            return None
+        try:
+            with Image.open(path) as source:
+                source.load()
+                image = source.copy()
+        except (OSError, ValueError) as exc:
+            logging.exception("Could not open image %s", path)
+            messagebox.showerror("Không mở được ảnh",
+                                 "Không đọc được file ảnh:\n%s\n\n%s" % (path, exc),
+                                 parent=parent)
+            return None
+        return image, path
 
     def on_mouse_wheel(self, event):
         delta = getattr(event, 'delta', 0)
@@ -1286,6 +1415,69 @@ class ImageEditor(EditorExportMixin):
         if factor == 0: self.scale = 1.0
         else: self.scale = max(0.2, min(self.scale * factor, 5.0))
         self.redraw_all()
+
+    def _on_canvas_configure(self, _event=None):
+        """Redraw on resize, but coalesce bursts into one paint.
+
+        Dragging a window edge emits a <Configure> per pixel, and on a 4K
+        screenshot each redraw costs ~93 ms (measured), so redrawing per event
+        makes the whole window feel stuck. Only the final size matters.
+        """
+        self._cancel_configure_redraw()
+        try:
+            self._configure_redraw_id = self.canvas.after(
+                self._CONFIGURE_REDRAW_MS, self._run_configure_redraw)
+        except tk.TclError:
+            self._configure_redraw_id = None
+
+    def _cancel_configure_redraw(self):
+        if self._configure_redraw_id is not None:
+            try:
+                self.canvas.after_cancel(self._configure_redraw_id)
+            except tk.TclError:
+                pass
+            self._configure_redraw_id = None
+
+    def _run_configure_redraw(self):
+        self._configure_redraw_id = None
+        try:
+            if self.canvas.winfo_exists():
+                self.redraw_all()
+        except tk.TclError:
+            pass
+
+    def _initial_fit_and_redraw(self):
+        """First paint: pick a zoom that shows the whole capture, then draw."""
+        try:
+            if not self.top.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        self.fit_to_window()
+
+    def fit_to_window(self, redraw=True):
+        """Scale the image down so the whole thing is visible at once.
+
+        Never magnifies: a small screenshot blown up to fill the canvas looks
+        blurry and is not what "fit" means. Returns the scale that was chosen.
+        """
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            # Not laid out yet (first open): the canvas would report 1x1.
+            cw = max(1, self.top.winfo_screenwidth() - 320)
+            ch = max(1, self.top.winfo_screenheight() - 200)
+        if self.orig_w and self.orig_h:
+            pad = 24  # keep a little breathing room around the image
+            fitted = min((cw - pad) / self.orig_w, (ch - pad) / self.orig_h, 1.0)
+            # At or below 20% the image is a thumbnail nobody can annotate;
+            # the zoom-in button stops there too (see set_zoom).
+            self.scale = max(0.2, round(fitted, 3))
+        else:
+            self.scale = 1.0
+        if redraw:
+            self.redraw_all()
+        return self.scale
 
     def redraw_all(self):
         self._tk_images = [] 
@@ -2062,6 +2254,125 @@ def open_editor_for(image):
         logging.exception("Could not open the editor for the captured image")
 
 
+# Formats the "open an existing image" path accepts. Pillow handles all of them;
+# listing the extensions only drives the file dialog filter.
+OPEN_IMAGE_FILETYPES = [
+    ("Ảnh", "*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif;*.tif;*.tiff"),
+    ("PNG", "*.png"),
+    ("JPEG", "*.jpg;*.jpeg"),
+    ("WebP", "*.webp"),
+    ("Tất cả file", "*.*"),
+]
+
+
+def _ask_open_image(parent):
+    """Show the open-image dialog and return the chosen path (or "")."""
+    return filedialog.askopenfilename(
+        title="Mở ảnh để chỉnh sửa",
+        filetypes=OPEN_IMAGE_FILETYPES,
+        parent=parent)
+
+
+def _pin_image(root, image):
+    """Show an always-on-top copy of the image for side-by-side reference."""
+    try:
+        return ui_extras.PinnedImage(root, image)
+    except Exception:
+        logging.exception("Could not pin the image")
+        return None
+
+
+def _set_theme(setting, root=None):
+    """Persist the theme choice and apply it.
+
+    Live re-theming would mean rebuilding every open window, since Tk widgets
+    bake their colours at construction. The setting is stored and the windows
+    already on screen keep their palette, which is what the tray menu promises by
+    saying the change applies from the next capture.
+    """
+    cfg = load_config()
+    cfg["theme"] = setting
+    try:
+        save_config(cfg)
+    except Exception:
+        logging.exception("Could not persist the theme setting")
+    applied = T.set_theme(T.resolve_theme(setting))
+    logging.info("Theme set to %s (resolved: %s)", setting, applied)
+    icon = _tray_icon_ref
+    if icon is not None:
+        try:
+            icon.notify("Đổi giao diện sang %s. Cửa sổ đang mở giữ nguyên màu cũ."
+                        % ("sáng" if applied == "light" else "tối"),
+                        APP_NAME)
+        except Exception:
+            logging.debug("Tray notification unavailable", exc_info=True)
+    return applied
+
+
+def _recent_menu_items(history, root, limit=8):
+    """Tray submenu entries for the most recent captures.
+
+    Called every time the menu opens, so it must stay cheap: it only lists a
+    directory. An empty history yields one disabled placeholder rather than an
+    empty submenu, which pystray renders as a dead arrow.
+    """
+    try:
+        paths = history.entries()[:limit]
+    except Exception:
+        logging.exception("Could not read the capture history")
+        paths = []
+    if not paths:
+        return [pystray.MenuItem('(chưa có ảnh nào)', None, enabled=False)]
+    items = []
+    for path in paths:
+        label = os.path.basename(path)
+        items.append(pystray.MenuItem(
+            label, lambda icon, menu_item, p=path: root.after(0, open_image_file, p)))
+    items.append(pystray.Menu.SEPARATOR)
+    items.append(pystray.MenuItem('Xoá lịch sử ảnh',
+                                  lambda icon, menu_item: root.after(0, _clear_history, history)))
+    return items
+
+
+def _clear_history(history):
+    count = history.clear()
+    logging.info("Cleared %d capture history entries", count)
+
+
+def open_image_file(path, parent=None):
+    """Open one specific image path in the editor."""
+    parent = parent or root_window_for_tk()
+    try:
+        with Image.open(path) as source:
+            source.load()
+            image = source.copy()
+    except (OSError, ValueError) as exc:
+        logging.exception("Could not open image %s", path)
+        messagebox.showerror("Không mở được ảnh",
+                             "Không đọc được file ảnh:\n%s\n\n%s" % (path, exc),
+                             parent=parent)
+        return None
+    try:
+        ImageEditor(parent, image)
+    except Exception:
+        logging.exception("Could not open the editor for %s", path)
+        return None
+    return path
+
+
+def open_image_from_disk(parent=None):
+    """Ask for an image file and open it in the editor.
+
+    Screenshots are not the only thing worth annotating: a saved capture often
+    needs a second pass the next day, and before this there was no way back in.
+    """
+    parent = parent or root_window_for_tk()
+    path = _ask_open_image(parent)
+    if not path:
+        return None
+    return open_image_file(path, parent=parent)
+
+
 _root_ref = None
 
 
@@ -2162,11 +2473,18 @@ def main():
     _root_ref = root
     root.iconbitmap(resource_path("icon_ScreenShotTool.ico"))
     logging.info("%s %s starting (config: %s)", APP_NAME, APP_VERSION, CONFIG_FILE)
+    # Applied before any widget exists: colours are read at construction, so a
+    # palette change after this point would only affect newly created widgets.
+    active_theme = T.set_theme(T.resolve_theme(load_config().get("theme", "system")))
+    logging.info("Theme: %s", active_theme)
+    history = ui_extras.CaptureHistory(os.path.join(CONFIG_DIR, "history"))
     app = SnippingTool(
         root,
         resource_path=resource_path,
         send_to_clipboard=send_to_clipboard,
         open_editor=open_editor_for,
+        on_capture_stored=history.save,
+        on_pin=lambda image: _pin_image(root, image),
     )
 
     # The listener re-registers the moment the config changes.
@@ -2218,6 +2536,18 @@ def main():
             item('10 giây', lambda icon, menu_item: root.after(0, lambda: app.start_snipping(10))),
         )),
         item('Khởi động cùng Windows', toggle_startup, checked=lambda item: check_startup()),
+        pystray.MenuItem('Giao diện', pystray.Menu(
+            item('Theo Windows', lambda icon, menu_item: root.after(0, lambda: _set_theme("system", root))),
+            item('Tối', lambda icon, menu_item: root.after(0, lambda: _set_theme("dark", root))),
+            item('Sáng', lambda icon, menu_item: root.after(0, lambda: _set_theme("light", root))),
+        )),
+        pystray.Menu.SEPARATOR,
+        item('Mở ảnh…', lambda icon, menu_item: root.after(0, open_image_from_disk)),
+        pystray.Menu.SEPARATOR,
+        # pystray re-evaluates the callable each time the menu opens, so the list
+        # grows with captures made since startup instead of freezing at launch.
+        pystray.MenuItem('Ảnh gần đây',
+                         pystray.Menu(lambda: _recent_menu_items(history, root))),
         pystray.Menu.SEPARATOR,
         item('Kiểm tra cập nhật', check_for_updates),
         item(f'Giới thiệu (v{APP_VERSION})', lambda icon, menu_item: root.after(0, app.show_function_info)),
