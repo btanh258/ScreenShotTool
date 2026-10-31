@@ -3,12 +3,15 @@ name: release
 # Builds the single-file exe and attaches it to a GitHub Release.
 #
 # Two ways to trigger it:
-#   * push a tag like v1.0.1
+#   * push a tag like v1.1.1
 #   * run it by hand from the Actions tab (workflow_dispatch)
 #
 # Either way it re-runs the full test suite first via `needs: unit-tests`, so a
-# release can no longer be published while the tests are failing — that is
+# release can no longer be published while the tests are failing - that is
 # exactly how v1.0.0 went out with 3 red tests.
+#
+# Code signing is optional and wired but disabled: see the "Sign the exe" step.
+# Without a certificate the build still publishes, just unsigned.
 
 on:
   push:
@@ -16,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to attach the build to (e.g. v1.0.1)'
+        description: 'Tag to attach the build to (e.g. v1.1.1)'
         required: true
 
 permissions:
@@ -40,6 +43,22 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Detect signing certificate
+        id: signing
+        shell: pwsh
+        env:
+          CERT: ${{ secrets.SIGNING_CERT_BASE64 }}
+        run: |
+          # A secret cannot be tested in a step-level `if`, so its presence is
+          # resolved here into a plain output the later steps can branch on.
+          if ([string]::IsNullOrWhiteSpace($env:CERT)) {
+            Write-Host "No signing certificate configured; the build will be unsigned."
+            "present=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            Write-Host "A signing certificate is configured."
+            "present=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
       - name: Install dependencies
         run: |
           python -m pip install -r requirements.txt
@@ -56,12 +75,55 @@ jobs:
             --hidden-import win32con --hidden-import win32api `
             --hidden-import pystray._win32 --hidden-import keyboard `
             --hidden-import cv2 --hidden-import numpy `
+            --hidden-import ui_editor_io --hidden-import ui_updates `
             --exclude-module matplotlib --exclude-module pytest `
             ScreenShotTool.pyw
+
+      - name: Sign the exe
+        if: steps.signing.outputs.present == 'true'
+        env:
+          SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          # Enabled automatically once the two repository secrets exist:
+          #   SIGNING_CERT_BASE64  - base64 of a .pfx code-signing certificate
+          #   SIGNING_CERT_PASSWORD - its password
+          # Without them the step is skipped and the release is published
+          # unsigned. Creating a trusted certificate is not something this repo
+          # can do: only a CA can issue one, so the absence is expected.
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
+
+          $signtool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found in the Windows SDK" }
+
+          & $signtool.FullName sign /f $pfx /p $env:SIGNING_CERT_PASSWORD `
+            /tr http://timestamp.digicert.com /td sha256 /fd sha256 `
+            dist\ScreenShotTool.exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed with $LASTEXITCODE" }
+
+          Remove-Item $pfx -Force
+          $check = Get-AuthenticodeSignature dist\ScreenShotTool.exe
+          Write-Host "Signature status: $($check.Status)"
+          if ($check.Status -ne 'Valid') { throw "The built exe did not end up validly signed." }
+
+      - name: Report signature status
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature dist\ScreenShotTool.exe
+          Write-Host "Authenticode: $($sig.Status)"
+          if ($sig.Status -ne 'Valid') {
+            Write-Warning ("This build is unsigned, so Windows SmartScreen will warn " +
+                           "on first run. Add SIGNING_CERT_BASE64 and " +
+                           "SIGNING_CERT_PASSWORD to sign automatically.")
+          }
 
       - name: Smoke-test the binary
         # A build that cannot start is worthless even if the tests pass, so the
         # produced exe must survive ten seconds in a real process.
+        shell: pwsh
         run: |
           $p = Start-Process -FilePath ".\dist\ScreenShotTool.exe" -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 10
@@ -71,6 +133,16 @@ jobs:
           }
           Stop-Process -Id $p.Id -Force
           Write-Host "The exe started and stayed alive."
+
+      - name: Record the build checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist\ScreenShotTool.exe -Algorithm SHA256).Hash
+          $size = (Get-Item dist\ScreenShotTool.exe).Length
+          Write-Host "SHA256: $hash"
+          Write-Host "Size:   $size bytes"
+          # Published alongside the exe so a downloader can verify what they got.
+          Set-Content -Path dist\SHA256SUMS.txt -Value "$hash  ScreenShotTool.exe" -Encoding ascii
 
       - name: Determine release tag
         id: tag
@@ -88,10 +160,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.name }}
         run: |
-          gh release create "$TAG" dist/ScreenShotTool.exe \
-            --repo "${{ github.repository }}" \
-            --title "$TAG" \
-            --generate-notes \
-            --verify-tag 2>/dev/null \
-          || gh release upload "$TAG" dist/ScreenShotTool.exe \
-            --repo "${{ github.repository }}" --clobber
+          set -euo pipefail
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            # Re-running for an existing tag must replace the asset, not fail.
+            gh release upload "$TAG" dist/ScreenShotTool.exe dist/SHA256SUMS.txt \
+              --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" dist/ScreenShotTool.exe dist/SHA256SUMS.txt \
+              --repo "${{ github.repository }}" \
+              --title "$TAG" \
+              --generate-notes
+          fi

@@ -198,7 +198,7 @@ Báo cáo kiểm định độc lập: [`docs/REDESIGN_VERIFICATION.md`](docs/RE
 - Cần kiểm thử thủ công thêm trên nhiều màn hình, DPI khác nhau, clipboard bị khóa, UAC và ứng dụng DRM.
 
   Phần **số học** của snapping đa màn hình (trục toạ độ âm khi màn hình phụ nằm bên trái/trên) đã được test trong `tests/test_multi_monitor.py`. Phần **chưa ai kiểm chứng trên phần cứng thật**: hai màn hình ở tỉ lệ DPI khác nhau (ví dụ laptop 150% + màn ngoài 100%). Nếu bạn gặp lỗi lệch vùng chọn ở cấu hình đó, hãy báo kèm thông tin DPI.
-- EXE chưa được ký số, vì vậy Windows SmartScreen có thể cảnh báo.
+- EXE chưa được ký số, vì vậy Windows SmartScreen có thể cảnh báo. Xem mục **Chữ ký số** bên dưới để biết cách xử lý và cách bật ký tự động.
 - Khi biến đổi riêng lẻ, text annotation có thể trở thành bitmap và không còn sửa nội dung như text vector.
 
 ## Cấu hình và log
@@ -215,4 +215,57 @@ Ghi cấu hình là **nguyên tử**: ghi file tạm rồi đổi tên, nên m�
 ## Giấy phép
 
 [MIT](LICENSE).
+
+## Chữ ký số và SmartScreen
+
+### Nếu bạn tải và chạy
+
+Bản phát hành hiện **chưa được ký số**, nên lần chạy đầu Windows SmartScreen có thể hiện: *"Windows protected your PC"*.
+
+Cách chạy:
+
+1. Bấm **More info**
+2. Bấm **Run anyway**
+
+Sau lần chạy đầu, Windows ghi nhớ file đó và không hỏi lại (trừ khi file thay đổi).
+
+Muốn chắc chắn file tải về không bị chỉnh sửa trên đường truyền, mỗi Release có kèm file `SHA256SUMS.txt`:
+
+```powershell
+Get-FileHash .\ScreenShotTool.exe -Algorithm SHA256
+# so với nội dung SHA256SUMS.txt trong cùng Release
+```
+
+### Bật ký số tự động
+
+Workflow phát hành đã có bước ký sẵn. Nó **tự bỏ qua** khi chưa có chứng chỉ, và **tự bật** khi bạn thêm hai secret vào repository:
+
+| Secret | Nội dung |
+|---|---|
+| `SIGNING_CERT_BASE64` | Nội dung file `.pfx` mã hoá base64 |
+| `SIGNING_CERT_PASSWORD` | Mật khẩu của file `.pfx` |
+
+Tạo chuỗi base64:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("chungchi.pfx")) | Set-Clipboard
+```
+
+Thêm secret bằng giao diện GitHub (Settings → Secrets and variables → Actions) hoặc:
+
+```powershell
+gh secret set SIGNING_CERT_BASE64 --repo btanh258/ScreenShotTool < cert.b64
+gh secret set SIGNING_CERT_PASSWORD --repo btanh258/ScreenShotTool
+```
+
+Sau đó mọi Release đều được ký và kiểm tra chữ ký hợp lệ trước khi phát hành.
+
+### Về việc mua chứng chỉ
+
+Không có cách nào để bản phát hành miễn phí hết cảnh báo SmartScreen. Danh tiếng SmartScreen được tích luỹ theo **chứng chỉ**, không theo file: một chứng chỉ mới vẫn bị cảnh báo cho tới khi có đủ lượt tải. Chứng chỉ EV được nhiều nơi quảng cáo là bỏ qua giai đoạn đó, nhưng cần xác minh với nhà cung cấp tại thời điểm mua.
+
+Chứng chỉ EV cần **xác minh doanh nghiệp** (giấy phép kinh doanh), nên cá nhân thường không mua được. Chứng chỉ OV dành cho cá nhân có thể mua nhưng đắt hơn giá trị một công cụ nội bộ nhỏ. Đây là lý do dự án chọn cách **công bố rõ là chưa ký** thay vì ký bằng chứng chỉ tự tạo — chứng chỉ tự tạo còn tệ hơn không ký, vì nó làm cảnh báo trông đáng ngại hơn.
+
+Điều thực sự giúp người dùng tin tưởng ở đây là mã nguồn mở và CI công khai: họ đọc được code, thấy test chạy.
+
 
