@@ -1,0 +1,22 @@
+target-version = "py311"
+line-length = 130
+
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    "_screens",
+]
+
+[lint]
+# Deliberately conservative: correctness rules only. This codebase predates any
+# linting and a broad style ruleset would bury real defects in cosmetic noise.
+#   E9  - syntax/runtime errors (undefined names, broken parses)
+#   F   - pyflakes (unused imports/variables, redefinitions, f-strings)
+select = ["E9", "F"]
+
+[lint.per-file-ignores]
+# Original upstream test file, untouched by this project's redesign work and
+# kept byte-identical on purpose. Its one unused import is not ours to change.
+"tests/test_transform.py" = ["F401"]

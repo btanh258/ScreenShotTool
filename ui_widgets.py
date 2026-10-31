@@ -758,7 +758,7 @@ class Slider(T.ThemedBase):
 
     def _render(self):
         self.delete("all")
-        w, h = int(self.winfo_reqwidth()), int(self.winfo_reqheight())
+        _, h = int(self.winfo_reqwidth()), int(self.winfo_reqheight())
         x1, x2 = self._track()
         y = h / 2
         T.round_rect(self, x1, y - 2, x2, y + 2, 2, fill=T.COLORS.border, outline="")

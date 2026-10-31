@@ -55,6 +55,25 @@ Biểu tượng `icon_ScreenShotTool.ico` phải nằm cạnh mã nguồn. Một
 - `Esc`: hủy lần chụp hiện tại.
 - Ảnh sau khi chụp được sao chép vào clipboard nếu clipboard khả dụng. Toast kết quả cho phép mở ảnh trong editor.
 
+#### Chụp có hẹn giờ
+
+Menu khay → **Chụp sau** → chọn *3 giây* / *5 giây* / *10 giây*.
+
+Hữu ích khi cần mở menu, chờ tooltip hiện, hoặc chờ animation chạy xong trước khi ảnh được "đóng băng". Phím tắt `Alt+X` luôn chụp ngay lập tức — hẹn giờ là đường chủ động.
+
+### Menu khay hệ thống
+
+| Mục | Tác dụng |
+|---|---|
+| Chụp màn hình (`Alt+X`) | Chụp ngay |
+| Chụp sau | Chụp hẹn giờ 3/5/10 giây |
+| Khởi động cùng Windows | Bật/tắt tự chạy khi đăng nhập |
+| Kiểm tra cập nhật | Hỏi GitHub xem có bản mới |
+| Giới thiệu (v…) | Bảng phím tắt và phiên bản |
+| Thoát | Thoát hoàn toàn |
+
+**Nếu phím tắt bị ứng dụng khác chiếm:** ScreenShotTool sẽ **thông báo một lần** qua khay hệ thống và ghi vào log, thay vì im lặng để phím không hoạt động. Bạn vẫn chụp được bằng menu khay, hoặc đổi phím trong **Giới thiệu → Giảm phím tắt**.
+
 ### Chỉnh sửa ảnh
 
 Editor hỗ trợ các công cụ:
@@ -133,22 +152,53 @@ gh release create v1.0.0 dist\ScreenShotTool.exe --title "v1.0.0" --notes "..."
 ## Kiểm thử
 
 ```powershell
+python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-Bộ test gồm 169 test:
+Bộ test gồm **236 test**:
 
-- `tests/test_transform.py` (12) - test gốc, không chỉnh sửa, kiểm tra logic biến đổi.
-- `tests/test_ui_parity.py` (86) - kiểm tra hệ thống thiết kế: token, helper màu, component, hành vi widget.
-- `tests/test_ui_smoke.py` (71) - kiểm tra tích hợp trên ứng dụng thật: contract thuộc tính/phương thức, đường dẫn sự kiện, wiring dialog và chuỗi capture → toast → editor.
+| File | Số test | Nội dung |
+|---|---|---|
+| `tests/test_transform.py` | 12 | Test gốc, **không chỉnh sửa**, kiểm tra logic biến đổi |
+| `tests/test_ui_parity.py` | 86 | Hệ thống thiết kế: token, helper màu, component, hành vi widget |
+| `tests/test_ui_smoke.py` | 71 | Tích hợp trên ứng dụng thật: contract, đường dẫn sự kiện, wiring dialog |
+| `tests/test_runtime_paths.py` | 39 | Đường lỗi: config hỏng/thiếu, clipboard khoá, registry, thiếu icon, hotkey bị chiếm |
+| `tests/test_updates.py` | 17 | So sánh phiên bản, xử lý lỗi mạng, callback nền |
+| `tests/test_multi_monitor.py` | 11 | Toạ độ đa màn hình (gốc âm), snapping cửa sổ, DPI awareness |
+
+Đo độ phủ:
+
+```powershell
+python -m coverage run --source=. -m unittest discover -s tests
+python -m coverage report --skip-covered --omit="tests/*,_*.py"
+```
 
 Ngoài ra `tests/visual_check.py` là script (không phải unittest) chụp ảnh giao diện ở nhiều kích thước cửa sổ để kiểm tra bằng mắt.
 
-Báo cáo kiểm định độc lập: [`REDESIGN_VERIFICATION.md`](REDESIGN_VERIFICATION.md).
+Báo cáo kiểm định độc lập: [`docs/REDESIGN_VERIFICATION.md`](docs/REDESIGN_VERIFICATION.md).
 
 ## Phụ thuộc và giới hạn
 
 - OpenCV/NumPy cung cấp khả năng tự nhận diện các vùng UI; nếu thiếu, chụp kéo vùng vẫn hoạt động.
 - Cần kiểm thử thủ công thêm trên nhiều màn hình, DPI khác nhau, clipboard bị khóa, UAC và ứng dụng DRM.
+
+  Phần **số học** của snapping đa màn hình (trục toạ độ âm khi màn hình phụ nằm bên trái/trên) đã được test trong `tests/test_multi_monitor.py`. Phần **chưa ai kiểm chứng trên phần cứng thật**: hai màn hình ở tỉ lệ DPI khác nhau (ví dụ laptop 150% + màn ngoài 100%). Nếu bạn gặp lỗi lệch vùng chọn ở cấu hình đó, hãy báo kèm thông tin DPI.
 - EXE chưa được ký số, vì vậy Windows SmartScreen có thể cảnh báo.
 - Khi biến đổi riêng lẻ, text annotation có thể trở thành bitmap và không còn sửa nội dung như text vector.
+
+## Cấu hình và log
+
+| Đường dẫn | Nội dung |
+|---|---|
+| `%APPDATA%\ScreenShotTool\ScreenShotTool_config.json` | Cấu hình (màu, độ dày, phím tắt) |
+| `%APPDATA%\ScreenShotTool\ScreenShotTool.log` | Log, tự cắt vòng ở ~1 MB |
+
+Nếu có file `ScreenShotTool_config.json` **nằm cạnh file exe**, bản portable đó được ưu tiên — tiện mang theo USB. Cấu hình cũ (cạnh exe hoặc trong thư mục làm việc) vẫn được đọc khi nâng cấp, nên không mất cài đặt.
+
+Ghi cấu hình là **nguyên tử**: ghi file tạm rồi đổi tên, nên mất điện giữa lúc ghi không làm hỏng file.
+
+## Giấy phép
+
+[MIT](LICENSE).
+

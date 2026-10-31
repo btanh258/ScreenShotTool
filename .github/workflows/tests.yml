@@ -27,7 +27,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install ruff coverage
+
+      - name: Lint
+        # Correctness rules only (see ruff.toml): catches undefined names,
+        # unused imports and similar real defects, not formatting taste.
+        run: python -m ruff check .
 
       - name: Run unit tests
         # The UI tests need a real Tk display. windows-latest provides one, so
@@ -35,4 +42,12 @@ jobs:
         # are Vietnamese and the default console codec cannot encode them.
         env:
           PYTHONIOENCODING: utf-8
-        run: python -m unittest discover -s tests -v
+        run: python -m coverage run --source=. -m unittest discover -s tests -v
+
+      - name: Report coverage
+        # Reported, not gated: a threshold picked today would be arbitrary and
+        # would push future work toward testing trivia. The number is here to
+        # make blind spots visible.
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m coverage report --skip-covered --omit="tests/*,_*.py"

@@ -1,7 +1,13 @@
-Pillow>=10.0
-keyboard>=0.13.5
-pywin32>=306
-pystray>=0.19.5
-mss>=9.0
-opencv-python>=4.8
-numpy>=1.24
+# Pinned to the versions this project is actually tested against.
+#
+# These were previously open-ended (">=10.0"), so a fresh install could pull a
+# major bump - numpy 3, Pillow 13, OpenCV 6 - and break the build with no code
+# change on our side. Upper bounds keep patch releases flowing while excluding
+# the next major.
+Pillow>=10.0,<13
+keyboard>=0.13.5,<1
+pywin32>=306,<313
+pystray>=0.19.5,<1
+mss>=9.0,<11
+opencv-python>=4.8,<6
+numpy>=1.24,<3

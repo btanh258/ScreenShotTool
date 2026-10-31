@@ -383,12 +383,42 @@ class SnippingTool:
     # ------------------------------------------------------------------
     # Capture lifecycle
     # ------------------------------------------------------------------
-    def start_snipping(self):
-        """Enter capture mode.  Re-entrant calls are ignored (held hotkey)."""
+    def start_snipping(self, delay=0):
+        """Enter capture mode.  Re-entrant calls are ignored (held hotkey).
+
+        ``delay`` postpones only the actual screen grab, not the window setup:
+        it exists so a user can open a menu, hover a tooltip or wait out an
+        animation before the screenshot freezes. The tray menu already closes
+        itself, but the app underneath often needs a moment to show the state
+        worth capturing.
+        """
         if getattr(self, "is_active", False):
             return
         self.is_active = True
 
+        if delay and delay > 0:
+            # Sleep before anything is captured. Doing it on the Tk thread would
+            # freeze the tray-owned window for the whole delay, so the wait runs
+            # on a worker and the grab is handed back to the main loop.
+            self.root.after(100, lambda: self._deferred_snipping(float(delay)))
+            return
+        self._capture_now()
+
+    def _deferred_snipping(self, delay):
+        """Run the grab after ``delay`` seconds without blocking the UI thread."""
+        self._pending_delay_job = getattr(self, "_pending_delay_job", None)
+        try:
+            import threading as _threading
+            worker = _threading.Timer(delay, lambda: self.root.after(0, self._capture_now))
+            worker.daemon = True
+            worker.start()
+            self._pending_delay_job = worker
+        except Exception:
+            log.exception("Could not schedule delayed capture")
+            self._capture_now()
+
+    def _capture_now(self):
+        """Take the screenshot and enter capture mode immediately."""
         _import_optional_dependencies()
         if mss is None:
             self.is_active = False

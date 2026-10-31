@@ -324,7 +324,6 @@ class DialogModuleTests(_TkTestCase):
 
     def test_dialogs_are_fully_themed_no_stray_light_panels(self):
         """A dialog left on Tk's default grey reads as a foreign window."""
-        import ui_theme as T
         dialog = ui_dialogs.open_info_dialog(self.root, dict(self.CONFIG))
         self.drain()
         try:

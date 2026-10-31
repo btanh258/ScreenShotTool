@@ -561,7 +561,10 @@ class WidgetConstructionTests(_TkTestCase):
         var = tk.StringVar(value="select")
         frame = self.frame()
         selected = W.RailButton(frame, T.GLYPH.pen, "Bút", "pen", var)
-        other = W.RailButton(frame, T.GLYPH.rect, "Chữ nhật", "rect", var)
+        # Deliberately kept, never read: constructing a second button bound to
+        # the same variable is what proves the two do not both claim the
+        # selected state.
+        W.RailButton(frame, T.GLYPH.rect, "Chữ nhật", "rect", var)
         self.assertFalse(selected._selected())
         var.set("pen")
         self.assertTrue(selected._selected(), "RailButton did not follow its variable")

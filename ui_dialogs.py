@@ -302,7 +302,7 @@ def _shortcut_groups(config):
     )
 
 
-def open_info_dialog(parent, config, *, on_open_hotkeys=None):
+def open_info_dialog(parent, config, *, on_open_hotkeys=None, app_version=None):
     """Quick guide plus a shortcut-settings entry point."""
     dialog = _shell(parent, "Giới thiệu ScreenShotTool")
     app = T.COLORS.app
@@ -317,7 +317,10 @@ def open_info_dialog(parent, config, *, on_open_hotkeys=None):
                size=42, glyph_size=18).pack(side="left", padx=(0, T.SPACE.md))
     titles = tk.Frame(heading, bg=app)
     titles.pack(side="left", fill="x", expand=True)
-    ttk.Label(titles, text="ScreenShotTool", style=T.STYLE_TITLE_LABEL).pack(anchor="w")
+    # The version comes from the caller so this module stays free of an import
+    # cycle back into the application module.
+    title_text = "ScreenShotTool" if not app_version else "ScreenShotTool %s" % app_version
+    ttk.Label(titles, text=title_text, style=T.STYLE_TITLE_LABEL).pack(anchor="w")
     ttk.Label(titles, text="Chụp, chú thích và xuất ảnh trong vài giây.",
               style=T.STYLE_SUBTITLE_LABEL).pack(anchor="w", pady=(2, 0))
 

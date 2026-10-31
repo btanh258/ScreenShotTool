@@ -1,0 +1,68 @@
+name: Bug report
+description: Báo lỗi khi công cụ chụp hoặc chỉnh sửa không đúng như mong đợi
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cảm ơn bạn đã báo lỗi. Vui lòng điền càng đầy đủ càng tốt — thiếu thông tin
+        về DPI và phiên bản Windows khiến phần lớn lỗi hiển thị không tái hiện được.
+  - type: input
+    id: version
+    attributes:
+      label: Phiên bản ScreenShotTool
+      description: "Xem ở menu khay → Giới thiệu, hoặc tên file trong tab Releases"
+      placeholder: v1.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Phiên bản Windows
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows 8.1
+        - Khác
+    validations:
+      required: true
+  - type: input
+    id: display
+    attributes:
+      label: Độ phân giải và tỉ lệ DPI
+      description: "Ví dụ: 1920x1080 @100%, hoặc 2 màn hình 2560x1440@125% + 1920x1080@100%"
+      placeholder: 1920x1080 @100%
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Các bước tái hiện
+      description: Càng ngắn càng tốt
+      placeholder: |
+        1. Nhấn Alt+X
+        2. Kéo chọn vùng
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Kết quả mong đợi
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Kết quả thực tế
+      description: Đính kèm ảnh chụp màn hình nếu lỗi liên quan hình ảnh
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Nội dung log
+      description: "Dán phần cuối của `%APPDATA%\\ScreenShotTool\\ScreenShotTool.log`"
+      render: text
+    validations:
+      required: false

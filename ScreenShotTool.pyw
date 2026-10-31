@@ -25,13 +25,35 @@ from contextlib import contextmanager
 from hotkey_settings import open_hotkey_settings
 import time
 import logging
+import logging.handlers
 
 import ui_theme as T
 import ui_widgets as W
 import ui_capture
 import ui_dialogs
+import ui_updates
+from ui_editor_io import EditorExportMixin, _COPY_LABEL
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def _setup_logging():
+    """Log to stderr, and to a size-capped file beside the config.
+
+    The tray app runs for days; an unbounded log file would grow without limit.
+    The rotating handler caps it at ~1 MB across two files. File logging is
+    best-effort: if the directory is unwritable the app still runs.
+    """
+    handlers = [logging.StreamHandler()]
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        handlers.append(logging.handlers.RotatingFileHandler(
+            os.path.join(CONFIG_DIR, "ScreenShotTool.log"),
+            maxBytes=512 * 1024, backupCount=1, encoding="utf-8"))
+    except OSError:
+        pass
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s",
+                        handlers=handlers)
+
+
 
 # Optional dependencies are loaded lazily so the editor remains usable without OpenCV.
 try:
@@ -61,10 +83,39 @@ except AttributeError:
     RESAMPLE = Image.LANCZOS
 
 APP_NAME = "ScreenShotTool"
+APP_VERSION = "1.1.0"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(APP_DIR, "ScreenShotTool_config.json")
+
+# Where the config lives.
+#
+# APP_DIR was wrong for the way the exe is actually distributed: people copy it
+# into Program Files, where a normal user cannot write, so every setting was
+# silently lost on restart. %APPDATA% is per-user and always writable.
+#
+# A portable copy still wins if one is present: if a config file sits next to the
+# exe, that one is used and kept next to the exe, so carrying the tool on a USB
+# stick keeps its settings with it.
+def _config_dir():
+    portable = os.path.join(APP_DIR, "ScreenShotTool_config.json")
+    if os.path.exists(portable):
+        return APP_DIR
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return os.path.join(appdata, APP_NAME)
+    return APP_DIR
+
+
+CONFIG_DIR = _config_dir()
+CONFIG_FILE = os.path.join(CONFIG_DIR, "ScreenShotTool_config.json")
+# Pre-1.1 builds wrote next to the exe or into the working directory; both are
+# read so an upgrade does not look like every setting was reset.
 LEGACY_CONFIG_FILE = os.path.join(os.getcwd(), "ScreenShotTool_config.json")
+LEGACY_CONFIG_FILE_APP_DIR = os.path.join(APP_DIR, "ScreenShotTool_config.json")
 REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+# Logging needs CONFIG_DIR, so it is configured here rather than at the top of
+# the file where the handler was defined.
+_setup_logging()
 
 HOTKEY_MODIFIERS = {"ALT": 0x0001, "CTRL": 0x0002, "SHIFT": 0x0004, "WIN": 0x0008}
 
@@ -135,12 +186,12 @@ def load_config():
         "editor_hotkeys": {"undo": "Ctrl+Z", "redo": "Ctrl+Y", "delete": "Delete", "edit_text": "Double-click"},
     }
     try:
-        candidates = [CONFIG_FILE]
-        if LEGACY_CONFIG_FILE != CONFIG_FILE:
-            candidates.append(LEGACY_CONFIG_FILE)
+        candidates = [CONFIG_FILE, LEGACY_CONFIG_FILE, LEGACY_CONFIG_FILE_APP_DIR]
+        seen = set()
         for path in candidates:
-            if not os.path.exists(path):
+            if path in seen or not os.path.exists(path):
                 continue
+            seen.add(path)
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             color = data.get("color", defaults["color"])
@@ -172,6 +223,7 @@ def save_config(cfg):
     """
     tmp_path = CONFIG_FILE + ".tmp"
     try:
+        os.makedirs(os.path.dirname(CONFIG_FILE) or ".", exist_ok=True)
         with open(tmp_path, "w", encoding="utf-8") as handle:
             json.dump(cfg, handle)
             handle.flush()
@@ -262,8 +314,7 @@ _RAIL_W_COMPACT = 64
 # holds stay reachable down to the app minimum width (760 px).
 _INSPECTOR_DOCK_MIN = 1180
 
-# Idle caption of the primary header action (save_clipboard swaps it for 2 s).
-_COPY_LABEL = "Copy"
+# _COPY_LABEL is imported from ui_editor_io, where the Copy button logic lives.
 
 
 class _CopyPill(W.PillButton):
@@ -320,7 +371,11 @@ class _ToolRailButton(W.RailButton):
                          font=(T.FONT_FAMILY, 16))
 
 
-class ImageEditor:
+class ImageEditor(EditorExportMixin):
+    # Looked up on each call instead of captured at construction, so tests that
+    # replace the module-level clipboard writer still take effect.
+    send_to_clipboard = property(lambda self: globals()["send_to_clipboard"])
+
     def __init__(self, root, pil_image):
         self.top = tk.Toplevel(root)
         self.top.title(f"{APP_NAME} — Trình chỉnh sửa ảnh")
@@ -1044,7 +1099,8 @@ class ImageEditor:
     def show_function_info(self):
         """Modern info / shortcut guide (see :mod:`ui_dialogs`)."""
         return ui_dialogs.open_info_dialog(
-            self.top, self.cfg, on_open_hotkeys=self.open_hotkey_settings)
+            self.top, self.cfg, on_open_hotkeys=self.open_hotkey_settings,
+            app_version=APP_VERSION)
 
     def open_hotkey_settings(self):
         """Editable hotkey card, wired to the same config the tray hotkey reads."""
@@ -1966,44 +2022,8 @@ class ImageEditor:
         self.redraw_all()
         self.save_state()
 
-    def save_clipboard(self):
-        if self.text_entry: self.commit_text()
-        copied = send_to_clipboard(self.render_final_image())
-        # The idle label is a constant, not "whatever is on the button now":
-        # a second click inside the 2 s confirmation window used to capture the
-        # confirmation text itself and restore to "✔ Đã Copy!" forever.
-        if self._copy_reset_id is not None:
-            self.top.after_cancel(self._copy_reset_id)
-        self.btn_copy.config(text="✔ Copy!" if copied else "✖ Lỗi")
-        self._copy_reset_id = self.top.after(2000, self._restore_copy_label)
-
-    def _restore_copy_label(self):
-        self._copy_reset_id = None
-        self.btn_copy.config(text=_COPY_LABEL)
-
-    def _cancel_copy_reset(self, _event=None):
-        # A pending confirmation timer must not outlive its button: Tk keeps the
-        # "after" script queued in the interpreter and reports
-        # "invalid command name ..._restore_copy_label" once the window is gone.
-        if self._copy_reset_id is not None:
-            try:
-                self.top.after_cancel(self._copy_reset_id)
-            except tk.TclError:
-                pass
-            self._copy_reset_id = None
-
-    def save_file(self):
-        if self.text_entry: self.commit_text()
-        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")], parent=self.top)
-        if path:
-            img = self.render_final_image()
-            if path.lower().endswith(".jpg") or path.lower().endswith(".jpeg"):
-                bg = Image.new("RGB", img.size, (255, 255, 255))
-                bg.paste(img, mask=img.split()[3])
-                img = bg
-            img.save(path)
-            if not messagebox.askyesno("Thành công", f"Đã lưu file tại:\n{path}\n\nBạn có muốn tiếp tục chỉnh sửa không?", parent=self.top):
-                self.top.destroy()
+    # save_clipboard / _restore_copy_label / _cancel_copy_reset / save_file are
+    # provided by ui_editor_io.EditorExportMixin (see the class statement).
 
 # The capture overlay and result toast live in ``ui_capture`` so the editor
 # module stays focused on annotation.  ``SnippingTool`` is re-exported below
@@ -2054,11 +2074,94 @@ def root_window_for_tk():
     return _root_ref
 
 
+def _hotkey_label(modifier_mask, vk):
+    """Render (modifiers, vk) back into something the user can recognise."""
+    names = [name for name, bit in (("Ctrl", 0x0002), ("Alt", 0x0001),
+                                    ("Shift", 0x0004), ("Win", 0x0008))
+             if modifier_mask & bit]
+    if 0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A:
+        names.append(chr(vk))
+    elif 0x70 <= vk <= 0x87:
+        names.append("F%d" % (vk - 0x6F))
+    return "+".join(names)
+
+
+# Set once the tray icon exists, so the hotkey listener (which starts earlier)
+# can surface a failure to the user instead of only to the log.
+_tray_icon_ref = None
+_warned_hotkeys = set()
+
+
+def _warn_hotkey_unavailable(modifier_mask, vk):
+    """Tell the user their capture hotkey did not take, once per combination."""
+    label = _hotkey_label(modifier_mask, vk)
+    if label in _warned_hotkeys:
+        return
+    _warned_hotkeys.add(label)
+    message = (
+        "%s đang được ứng dụng khác sử dụng nên không đăng ký được.\n"
+        "Bạn vẫn chụp được bằng menu khay hệ thống, hoặc chọn phím khác "
+        "trong Cài đặt phím tắt." % label
+    )
+    icon = _tray_icon_ref
+    if icon is not None:
+        try:
+            icon.notify(message, "ScreenShotTool")
+            return
+        except Exception:
+            logging.debug("Tray notification unavailable", exc_info=True)
+    logging.warning("Hotkey %s unavailable: %s", label, message.replace("\n", " "))
+
+
+def _run_hotkey_listener(root, app, hotkey_stop):
+    """Register the capture hotkey and pump its messages until stopped.
+
+    Pulled out of main() so the re-registration logic can be read (and tested)
+    without the tray, the Tk root and the menu all in scope.
+    """
+    user32 = ctypes.windll.user32
+    WM_HOTKEY = 0x0312
+    PM_REMOVE = 0x0001
+    registered = None
+    # Tracks the combination we last *attempted*.  Without it a failed
+    # RegisterHotKey (another app owns Alt+X, or the key is reserved) never
+    # leaves ``desired != registered``, so the loop re-registered and
+    # re-logged every 100 ms forever instead of waiting for a config change.
+    attempted = None
+    msg = ctypes.wintypes.MSG()
+    while not hotkey_stop.is_set():
+        desired = parse_hotkey(load_config().get("capture_hotkey", "Alt+X")) or (HOTKEY_MODIFIERS["ALT"], ord("X"))
+        if desired != attempted:
+            attempted = desired
+            if registered is not None:
+                user32.UnregisterHotKey(None, 1)
+                registered = None
+            if user32.RegisterHotKey(None, 1, desired[0], desired[1]):
+                registered = desired
+                logging.info("Capture hotkey registered: %s", load_config().get("capture_hotkey", "Alt+X"))
+            else:
+                # Another app owns the combination (or Windows reserved it).
+                # Logging alone hid this: the tray kept working, so the user
+                # had no way to learn why their hotkey did nothing. Tell them
+                # once per failed combination, not every 100 ms.
+                logging.warning("Could not register capture hotkey; tray remains available")
+                _warn_hotkey_unavailable(desired)
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+            if msg.message == WM_HOTKEY:
+                root.after(0, app.start_snipping)
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        time.sleep(0.1)
+    if registered is not None:
+        user32.UnregisterHotKey(None, 1)
+
+
 def main():
-    global _root_ref
+    global _root_ref, _tray_icon_ref
     root = tk.Tk()
     _root_ref = root
-    root.iconbitmap(resource_path("icon_ScreenShotTool.ico")) # <--- THÊM DÒNG NÀY
+    root.iconbitmap(resource_path("icon_ScreenShotTool.ico"))
+    logging.info("%s %s starting (config: %s)", APP_NAME, APP_VERSION, CONFIG_FILE)
     app = SnippingTool(
         root,
         resource_path=resource_path,
@@ -2066,44 +2169,10 @@ def main():
         open_editor=open_editor_for,
     )
 
-    
-    # --- Win32 listener that re-registers immediately when settings change ---
+    # The listener re-registers the moment the config changes.
     hotkey_stop = threading.Event()
-
-    def native_hotkey_listener():
-        user32 = ctypes.windll.user32
-        WM_HOTKEY = 0x0312
-        PM_REMOVE = 0x0001
-        registered = None
-        # Tracks the combination we last *attempted*.  Without it a failed
-        # RegisterHotKey (another app owns Alt+X, or the key is reserved) never
-        # leaves ``desired != registered``, so the loop re-registered and
-        # re-logged every 100 ms forever instead of waiting for a config change.
-        attempted = None
-        msg = ctypes.wintypes.MSG()
-        while not hotkey_stop.is_set():
-            desired = parse_hotkey(load_config().get("capture_hotkey", "Alt+X")) or (HOTKEY_MODIFIERS["ALT"], ord("X"))
-            if desired != attempted:
-                attempted = desired
-                if registered is not None:
-                    user32.UnregisterHotKey(None, 1)
-                    registered = None
-                if user32.RegisterHotKey(None, 1, desired[0], desired[1]):
-                    registered = desired
-                    logging.info("Capture hotkey registered: %s", load_config().get("capture_hotkey", "Alt+X"))
-                else:
-                    logging.warning("Could not register capture hotkey; tray remains available")
-            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
-                if msg.message == WM_HOTKEY:
-                    root.after(0, app.start_snipping)
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
-            time.sleep(0.1)
-        if registered is not None:
-            user32.UnregisterHotKey(None, 1)
-
-    threading.Thread(target=native_hotkey_listener, daemon=True).start()
-    # ----------------------------------------------------
+    threading.Thread(target=lambda: _run_hotkey_listener(root, app, hotkey_stop),
+                     daemon=True).start()
 
     def on_quit(icon, item):
         hotkey_stop.set()
@@ -2111,12 +2180,51 @@ def main():
         root.destroy()
         os._exit(0)
 
+    def check_for_updates(icon, menu_item):
+        """Ask GitHub for the latest release without blocking the tray."""
+        def report(release, current):
+            def show():
+                if release is None:
+                    messagebox.showinfo(
+                        "Kiểm tra cập nhật",
+                        "Không kiểm tra được bản mới.\n"
+                        "Hãy kiểm tra kết nối mạng rồi thử lại.",
+                        parent=root)
+                    return
+                tag = release.get("tag") or "(không rõ)"
+                if ui_updates.is_newer(tag, current):
+                    messagebox.showinfo(
+                        "Có bản mới",
+                        "Bản hiện tại: %s\nBản mới nhất: %s\n\n%s\n\n"
+                        "Mở trang tải về?" % (current, tag, release.get("url", "")),
+                        parent=root)
+                else:
+                    messagebox.showinfo(
+                        "Kiểm tra cập nhật",
+                        "Bạn đang dùng bản mới nhất (%s)." % current,
+                        parent=root)
+            root.after(0, show)
+
+        ui_updates.check_async(APP_VERSION, report)
+
     icon = pystray.Icon("SnippingTool", create_tray_icon(), "Công cụ Chụp màn hình", menu=pystray.Menu(
         item(f'Chụp màn hình ({load_config().get("capture_hotkey", "Alt+X")})', lambda icon, menu_item: root.after(0, app.start_snipping)),
+        # A delay lets a menu finish closing or a tooltip appear before the
+        # screen freezes. The hotkey stays instant; this is the deliberate path.
+        pystray.MenuItem('Chụp sau', pystray.Menu(
+            item('Ngay lập tức', lambda icon, menu_item: root.after(0, app.start_snipping)),
+            item('3 giây', lambda icon, menu_item: root.after(0, lambda: app.start_snipping(3))),
+            item('5 giây', lambda icon, menu_item: root.after(0, lambda: app.start_snipping(5))),
+            item('10 giây', lambda icon, menu_item: root.after(0, lambda: app.start_snipping(10))),
+        )),
         item('Khởi động cùng Windows', toggle_startup, checked=lambda item: check_startup()),
+        pystray.Menu.SEPARATOR,
+        item('Kiểm tra cập nhật', check_for_updates),
+        item(f'Giới thiệu (v{APP_VERSION})', lambda icon, menu_item: root.after(0, app.show_function_info)),
         pystray.Menu.SEPARATOR,
         item('Thoát', on_quit)
     ))
+    _tray_icon_ref = icon  # let the hotkey listener notify through it
     threading.Thread(target=icon.run, daemon=True).start()
     
     root.mainloop()

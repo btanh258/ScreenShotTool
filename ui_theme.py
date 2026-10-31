@@ -614,15 +614,12 @@ class ThemedBase(tk.Canvas):
                      "wraplength", "justify", "anchor", "default", "underline")
 
     def configure(self, cget=False, **kwargs):
-        handled_text = handled_state = False
         passthrough = {}
         for key, value in kwargs.items():
             if key in self._TEXT_KEYS:
                 self._text = "" if value is None else str(value)
-                handled_text = True
             elif key in self._STATE_KEYS:
                 self._state = str(value)
-                handled_state = True
             elif key in self._SURFACE_KEYS:
                 self._surface = str(value)
                 try:
