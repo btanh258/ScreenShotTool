@@ -54,3 +54,6 @@ _wire_t4.py
 # scratch harnesses and generated probe scripts
 _probe_*.py
 _make_docs_shots.py
+
+# local CI simulation harness
+_ci_sim.py
