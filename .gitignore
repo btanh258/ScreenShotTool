@@ -1,0 +1,52 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+*.spec
+
+# The release binary is published as a GitHub Release asset, not tracked in
+# git: a 72 MB blob in history bloats every clone. Build it with the command
+# in README.md and attach it to the release.
+release/
+
+# Local IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Local runtime/config overrides
+ScreenShotTool_config.json
+ScreenShotTool_config.local.json
+.env
+.env.*
+!.env.example
+
+# Verification screenshots and one-off capture harnesses
+_screens/
+_capture_*.py
+_e2e_wiring.py
+_win_shots.py
+_wire_t4.py
