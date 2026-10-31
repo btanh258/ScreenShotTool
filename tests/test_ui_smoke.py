@@ -943,17 +943,22 @@ class EditorReachabilityTests(_TkTestCase):
         if not editor.inspector.winfo_ismapped():
             editor.btn_inspector_toggle.invoke()
             self.drain()
+        print("DIAGTEST width=%s mapped=%s overlay=%s last_w=%s mgr=%s focus=%s"
+              % (editor.top.winfo_width(),
+                 editor.inspector.winfo_ismapped(),
+                 getattr(editor, "_inspector_overlay", None),
+                 getattr(editor, "_last_layout_width", None),
+                 editor.inspector.winfo_manager(),
+                 self.root.focus_get()), flush=True)
         self.assertTrue(editor.inspector.winfo_ismapped(),
                         "could not open the floating inspector at 1100 px")
-        # event_generate("<Escape>") on the Toplevel only reaches the bind_all
-        # handler when Tk picks a focus owner for it, which a headless runner
-        # does not have (locally the window manager supplies one, so this only
-        # failed on CI). Generating the event on the widget that owns the
-        # keyboard focus routes it through the app-level tag deterministically.
         editor.top.focus_set()
         self.drain()
         editor.top.event_generate("<Escape>", when="tail")
         self.drain()
+        print("DIAGTEST after escape mapped=%s overlay=%s"
+              % (editor.inspector.winfo_ismapped(),
+                 getattr(editor, "_inspector_overlay", None)), flush=True)
         self.assertFalse(editor.inspector.winfo_ismapped(),
                          "Escape did not dismiss the floating inspector, so it is a "
                          "trap: the only way out would be the gear")
