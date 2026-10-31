@@ -29,12 +29,6 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Diagnostic - what the Escape test sees on this runner
-        if: always()
-        env:
-          PYTHONIOENCODING: utf-8
-        run: python _diag_ci.py
-
       - name: Run unit tests
         # The UI tests need a real Tk display. windows-latest provides one, so
         # nothing is skipped here. Set PYTHONIOENCODING because the UI strings

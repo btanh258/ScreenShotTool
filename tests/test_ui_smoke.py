@@ -943,22 +943,18 @@ class EditorReachabilityTests(_TkTestCase):
         if not editor.inspector.winfo_ismapped():
             editor.btn_inspector_toggle.invoke()
             self.drain()
-        print("DIAGTEST width=%s mapped=%s overlay=%s last_w=%s mgr=%s focus=%s"
-              % (editor.top.winfo_width(),
-                 editor.inspector.winfo_ismapped(),
-                 getattr(editor, "_inspector_overlay", None),
-                 getattr(editor, "_last_layout_width", None),
-                 editor.inspector.winfo_manager(),
-                 self.root.focus_get()), flush=True)
         self.assertTrue(editor.inspector.winfo_ismapped(),
                         "could not open the floating inspector at 1100 px")
-        editor.top.focus_set()
+        # Escape reaches the app-level binding through the focus owner. A CI
+        # runner never gives this background process window one (focus_get()
+        # returns None there, while a local desktop session supplies it), so
+        # event_generate would be delivered to nothing. focus_force takes the
+        # focus regardless of whether the window manager is willing to grant
+        # it - which is the situation a real user is never in, but CI is.
+        editor.top.focus_force()
         self.drain()
         editor.top.event_generate("<Escape>", when="tail")
         self.drain()
-        print("DIAGTEST after escape mapped=%s overlay=%s"
-              % (editor.inspector.winfo_ismapped(),
-                 getattr(editor, "_inspector_overlay", None)), flush=True)
         self.assertFalse(editor.inspector.winfo_ismapped(),
                          "Escape did not dismiss the floating inspector, so it is a "
                          "trap: the only way out would be the gear")
@@ -969,7 +965,7 @@ class EditorReachabilityTests(_TkTestCase):
         if not editor.inspector.winfo_ismapped():
             editor.btn_inspector_toggle.invoke()
             self.drain()
-        editor.top.focus_set()
+        editor.top.focus_force()
         self.drain()
         editor.top.event_generate("<Escape>", when="tail")
         self.drain()
