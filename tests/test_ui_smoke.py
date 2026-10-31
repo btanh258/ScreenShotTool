@@ -847,6 +847,16 @@ class EditorReachabilityTests(_TkTestCase):
         editor.top.update_idletasks()
         editor.top.geometry("%dx%d+10+10" % (width, height))
         self.drain()
+        # A single drain() is not enough on a slow CI runner: _apply_layout runs
+        # from <Configure>, and the synthetic geometry only takes effect after
+        # the window manager has acknowledged the resize. Without settling, the
+        # width can still read 1 and _apply_layout returns early, leaving the
+        # inspector in its initial docked state instead of the floating one the
+        # test expects to toggle.
+        for _ in range(12):
+            self.drain()
+            if editor.top.winfo_width() == width:
+                break
         return editor
 
     @staticmethod
