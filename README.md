@@ -139,15 +139,29 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed `
   --hidden-import win32con --hidden-import win32api `
   --hidden-import pystray._win32 --hidden-import keyboard `
   --hidden-import cv2 --hidden-import numpy `
+  --hidden-import ui_editor_io --hidden-import ui_updates `
   --exclude-module matplotlib --exclude-module pytest `
   ScreenShotTool.pyw
 ```
 
-File tạo ra nằm trong `dist\ScreenShotTool.exe` (~72 MB). Binary này **không** được commit vào git; để phát hành, tạo một GitHub Release và đính kèm file đó làm asset:
+File tạo ra nằm trong `dist\ScreenShotTool.exe` (~72 MB). Binary này **không** được commit vào git.
 
-```powershell
-gh release create v1.0.0 dist\ScreenShotTool.exe --title "v1.0.0" --notes "..."
-```
+### Phát hành
+
+Có hai cách, cả hai đều **chạy toàn bộ test trước** rồi mới build (`needs: unit-tests` trong `.github/workflows/release.yml`):
+
+1. **Tự động:** đẩy một tag, CI build và đính kèm exe vào Release.
+
+   ```powershell
+   git tag -a v1.1.0 -m "ScreenShotTool v1.1.0"
+   git push origin v1.1.0
+   ```
+
+2. **Thủ công từ máy:** build rồi tự tạo Release (test không được tự chạy ở đây — phải tự đảm bảo đã chạy `unittest` và `ruff` trước).
+
+   ```powershell
+   gh release create v1.1.0 dist\ScreenShotTool.exe --title "v1.1.0" --notes-file notes.md
+   ```
 
 ## Kiểm thử
 
