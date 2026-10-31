@@ -935,7 +935,14 @@ class EditorReachabilityTests(_TkTestCase):
             self.drain()
         self.assertTrue(editor.inspector.winfo_ismapped(),
                         "could not open the floating inspector at 1100 px")
-        editor.top.event_generate("<Escape>")
+        # event_generate("<Escape>") on the Toplevel only reaches the bind_all
+        # handler when Tk picks a focus owner for it, which a headless runner
+        # does not have (locally the window manager supplies one, so this only
+        # failed on CI). Generating the event on the widget that owns the
+        # keyboard focus routes it through the app-level tag deterministically.
+        editor.top.focus_set()
+        self.drain()
+        editor.top.event_generate("<Escape>", when="tail")
         self.drain()
         self.assertFalse(editor.inspector.winfo_ismapped(),
                          "Escape did not dismiss the floating inspector, so it is a "
@@ -947,7 +954,9 @@ class EditorReachabilityTests(_TkTestCase):
         if not editor.inspector.winfo_ismapped():
             editor.btn_inspector_toggle.invoke()
             self.drain()
-        editor.top.event_generate("<Escape>")
+        editor.top.focus_set()
+        self.drain()
+        editor.top.event_generate("<Escape>", when="tail")
         self.drain()
         editor.btn_inspector_toggle.invoke()
         self.drain()
