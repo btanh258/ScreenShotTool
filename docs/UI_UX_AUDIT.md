@@ -1,5 +1,12 @@
 # ScreenShotTool — UI/UX Audit & Redesign Direction
 
+> **Trạng thái (2026-11-01):** tài liệu lịch sử — bản đánh giá **trước** khi cải tổ.
+> Toàn bộ vấn đề ở mục 2 đã được xử lý; hệ thống thiết kế ở mục 3 đã được hiện thực
+> (`ui_theme.py`, `ui_widgets.py`). Các câu hỏi ở mục 4 đã có câu trả lời trong sản
+> phẩm: UI một ngôn ngữ tiếng Việt, màu nhấn azure `#3B82F6`, tối thiểu 760×520, và
+> **đã có chế độ Sáng/Tối chuyển ngay trong editor**. Đừng đọc mục 2 như mô tả hiện
+> trạng — xem README.
+
 **Ngày:** 2026-10-31 · **Baseline:** commit `c3c340c` · **Nền tảng:** Python 3.11+/Tkinter + Pillow (Windows desktop)
 
 ---

@@ -1,5 +1,11 @@
 # Redesign Verification Report
 
+> **Trạng thái (2026-11-01):** tài liệu lịch sử, giữ nguyên nội dung gốc để tra cứu.
+> Báo cáo này là cổng kiểm định cho **đợt cải tổ giao diện** trên baseline `c3c340c`.
+> Mọi phát hiện B1–B3 và ghi chú N1 đều đã đóng. Bộ test lúc đó là 169; hiện tại là
+> **329 test** — xem bảng trong README. Tài liệu này **không** mô tả các tính năng
+> thêm sau đó (tự cập nhật, chấm tròn cho bút, sửa sàn hoàn tác).
+
 Independent quality gate for the ScreenShotTool UI redesign.
 Owner: **verifier**. I do not design and I do not fix product code — I test it and
 report defects with evidence.
@@ -7,8 +13,8 @@ report defects with evidence.
 Repo: `<repo root>`
 Baseline commit: `c3c340c` ("Update README.md")
 Python: `<python interpreter>` (3.12.14, Tk 8.6)
-Contract: `UI_REDESIGN_CONTRACT.md` (frozen interfaces)
-Screenshots: `_screens/after/` (56 PNG, 3 window sizes)
+Contract: `UI_REDESIGN_CONTRACT.md` (frozen interfaces; removed from the repo once the redesign shipped, superseded by the code itself and the tests)
+Screenshots: `_screens/after/` (56 PNG, 3 window sizes; working-tree artifact, not committed)
 
 ---
 

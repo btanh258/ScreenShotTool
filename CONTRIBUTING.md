@@ -41,11 +41,13 @@ CI chạy ruff và toàn bộ test trên `windows-latest`. PR chỉ được mer
 | File | Nội dung |
 |---|---|
 | `ScreenShotTool.pyw` | Điểm vào, tray, editor shell (`ImageEditor`), cấu hình, clipboard |
-| `ui_capture.py` | Luồng chụp màn hình, chọn vùng, snapping cửa sổ |
+| `ui_capture.py` | Luồng chụp màn hình, chọn vùng, snapping cửa sổ, toast kết quả |
 | `ui_dialogs.py` | Dialog thông tin, phím tắt, cài đặt |
-| `ui_theme.py` | Token thiết kế (màu, khoảng cách, font) |
+| `ui_theme.py` | Token thiết kế (màu, khoảng cách, font), hai bảng màu sáng/tối |
 | `ui_widgets.py` | Widget vẽ bằng Canvas (Tk gốc không bo góc được) |
-| `ui_updates.py` | Kiểm tra bản mới qua GitHub Releases API |
+| `ui_extras.py` | Cửa sổ ghim ảnh nổi, ảnh gần đây |
+| `ui_editor_io.py` | Mở/lưu/xuất ảnh của editor (mixin) |
+| `ui_updates.py` | Kiểm tra, tải và thay thế bản mới qua GitHub Releases |
 | `hotkey_settings.py` | Dialog cấu hình phím tắt |
 
 ## Giấy phép
