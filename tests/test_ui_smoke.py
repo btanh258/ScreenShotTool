@@ -92,6 +92,25 @@ class _TkTestCase(unittest.TestCase):
         except tk.TclError:
             pass
 
+    def wait_for_editor_fit(self, editor, timeout=3.0):
+        """Drive Tk until the editor's deferred first-fit has run.
+
+        ``ImageEditor`` fits and centres the image from an ``after`` callback
+        scheduled 60 ms out, because the canvas only reports its real size once
+        laid out. That callback calls ``fit_to_window``, which replaces
+        ``scale`` - so if it lands *after* a test sets a zoom, it silently
+        undoes the zoom. On a slow CI runner it fired between ``set_zoom`` and
+        the assertion, turning a passing test red. Wait for it explicitly.
+        """
+        import time
+        deadline = time.monotonic() + timeout
+        while getattr(editor, "_fit_after_id", None) is not None:
+            if time.monotonic() > deadline:
+                break
+            self.drain()
+            time.sleep(0.01)
+        self.drain()
+
 
 # ==========================================================================
 # ui_capture.py  (contract section 4)
@@ -500,14 +519,7 @@ class EditorConstructionTests(_TkTestCase):
         values and fails on a slow machine - which is exactly how this test went
         red on CI while passing locally.
         """
-        import time
-        deadline = time.monotonic() + timeout
-        while getattr(self.editor, "_fit_after_id", None) is not None:
-            if time.monotonic() > deadline:
-                break
-            self.drain()
-            time.sleep(0.01)
-        self.drain()
+        self.wait_for_editor_fit(self.editor, timeout)
 
     def tearDown(self):
         try:
@@ -875,6 +887,10 @@ class EditorReachabilityTests(_TkTestCase):
             self.drain()
             if editor.top.winfo_width() == width:
                 break
+        # The first-fit is scheduled 60 ms out and replaces ``scale``. Let it
+        # land now so a later set_zoom() in a test is not silently undone when
+        # the callback fires mid-assertion on a slow runner.
+        self.wait_for_editor_fit(editor)
         return editor
 
     @staticmethod
