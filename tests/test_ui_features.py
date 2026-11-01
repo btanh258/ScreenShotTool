@@ -593,5 +593,394 @@ class LiveThemeSwitchTests(unittest.TestCase):
             self.assertTrue(shadow.winfo_exists())
 
 
+class BrushDotTests(unittest.TestCase):
+    """A click with no drag must leave a dot, not nothing.
+
+    Both brushes used to swallow it: the highlighter dropped any stroke with
+    fewer than two points, and the pen asked Tk for a single-point line, which
+    Tk draws as nothing at all.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.editor = self.app.ImageEditor(
+            self.root, Image.new("RGB", (200, 150), (30, 60, 90)))
+        self.editor.top.state("normal")
+        for _ in range(8):
+            self.root.update()
+        self.addCleanup(self._teardown)
+
+    def _teardown(self):
+        try:
+            self.editor.top.destroy()
+        except tk.TclError:
+            pass
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    class _Event:
+        def __init__(self, x, y, state=0):
+            self.x, self.y, self.state = x, y, state
+
+    def _inside(self, x=100, y=75):
+        """Canvas position of an image coordinate, so clicks land on the image.
+
+        The canvas centres a small image, so a raw canvas coordinate can sit
+        outside it - and a shape drawn there is legitimately invisible.
+        """
+        self.editor.redraw_all()
+        self.root.update()
+        return (x * self.editor.scale + self.editor.offset_x,
+                y * self.editor.scale + self.editor.offset_y)
+
+    def _click(self, tool, image_point=(100, 75)):
+        editor = self.editor
+        cx, cy = self._inside(*image_point)
+        editor.tool_var.set(tool)
+        editor.on_press(self._Event(int(cx), int(cy)))
+        editor.on_release(self._Event(int(cx), int(cy)))
+        for _ in range(4):
+            self.root.update()
+
+    def _items_for(self, tag):
+        return [item for item in self.editor.canvas.find_all()
+                if tag in self.editor.canvas.gettags(item)]
+
+    def test_pen_click_creates_one_shape(self):
+        self._click("pen")
+        self.assertEqual(len(self.editor.shapes), 1)
+        self.assertEqual(self.editor.shapes[0]["type"], "pen")
+
+    def test_pen_click_is_visible_on_the_canvas(self):
+        self._click("pen")
+        tag = self.editor.shapes[0]["tag"]
+        items = self._items_for(tag)
+        self.assertTrue(items, "the dot produced no canvas item")
+        self.assertEqual(self.editor.canvas.type(items[0]), "oval",
+                         "a single click should be drawn as a dot")
+
+    def test_pen_click_survives_a_redraw(self):
+        self._click("pen")
+        tag = self.editor.shapes[0]["tag"]
+        self.editor.redraw_all()
+        self.root.update()
+        items = self._items_for(tag)
+        self.assertTrue(items, "the dot vanished on redraw")
+        self.assertEqual(self.editor.canvas.type(items[0]), "oval")
+
+    def test_pen_click_is_exported(self):
+        self._click("pen")
+        shape = self.editor.shapes[0]
+        rendered = self.editor.render_final_image()
+        self.assertEqual(rendered.mode, "RGBA")
+        # The shape stores image coordinates, so probe where it actually is.
+        ix, iy = int(round(shape["coords"][0])), int(round(shape["coords"][1]))
+        pixel = rendered.getpixel((ix, iy))
+        self.assertNotEqual(pixel[:3], (30, 60, 90),
+                            "the dot was not rendered into the export")
+
+    def test_highlight_click_creates_one_shape(self):
+        self._click("highlight")
+        self.assertEqual(len(self.editor.shapes), 1,
+                         "the highlighter discarded the click")
+        shape = self.editor.shapes[0]
+        self.assertEqual(shape["type"], "highlight")
+        self.assertIn("orig_pil_img", shape,
+                      "the highlighter dot has no painted layer")
+        self.assertGreater(shape["orig_pil_img"].width, 0)
+        self.assertGreater(shape["orig_pil_img"].height, 0)
+
+    def test_highlight_click_is_visible_on_the_canvas(self):
+        self._click("highlight")
+        tag = self.editor.shapes[0]["tag"]
+        self.assertTrue(self._items_for(tag),
+                        "the highlighter dot produced no canvas item")
+
+    def test_a_drag_still_draws_a_stroke(self):
+        editor = self.editor
+        x0, y0 = self._inside(20, 20)
+        editor.tool_var.set("pen")
+        editor.on_press(self._Event(int(x0), int(y0)))
+        editor.on_drag(self._Event(int(x0) + 40, int(y0) + 30))
+        editor.on_drag(self._Event(int(x0) + 70, int(y0) + 10))
+        editor.on_release(self._Event(int(x0) + 70, int(y0) + 10))
+        for _ in range(4):
+            self.root.update()
+        self.assertGreater(len(editor.shapes[0]["coords"]), 2,
+                           "dragging must still record a multi-point stroke")
+        tag = editor.shapes[0]["tag"]
+        items = self._items_for(tag)
+        self.assertTrue(any(editor.canvas.type(i) == "line" for i in items),
+                        "a dragged stroke should be a line, not a dot")
+
+
+class HistoryFloorTests(unittest.TestCase):
+    """Undoing everything must return the document the editor opened.
+
+    Trimming used to discard the oldest snapshot itself, so once a session
+    passed the step cap the undo floor became an arbitrary mid-session state and
+    the objects drawn before it looked deleted, with no way back.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.editor = self.app.ImageEditor(
+            self.root, Image.new("RGB", (120, 90), (10, 200, 30)))
+        self.editor.top.state("normal")
+        for _ in range(6):
+            self.root.update()
+        self.addCleanup(self._teardown)
+
+    def _teardown(self):
+        try:
+            self.editor.top.destroy()
+        except tk.TclError:
+            pass
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def _add_shapes(self, count):
+        for index in range(count):
+            self.editor.shapes.append(
+                {"type": "rect", "tag": self.editor.get_new_tag(),
+                 "color": "#ff0000", "width": 2,
+                 "coords": [index, index, 20 + index, 20 + index]})
+            self.editor.save_state()
+
+    def test_the_original_state_stays_at_the_bottom_of_the_stack(self):
+        editor = self.editor
+        editor.MAX_HISTORY = 5
+        self._add_shapes(12)
+        self.assertLessEqual(len(editor.history), editor.MAX_HISTORY,
+                             "the step cap stopped being enforced")
+        self.assertTrue(editor.history[0].get("baseline"),
+                        "the baseline snapshot was trimmed away")
+
+    def test_undoing_everything_returns_the_untouched_document(self):
+        editor = self.editor
+        editor.MAX_HISTORY = 5
+        original = len(editor.shapes)
+        self._add_shapes(12)
+        while editor.history_index > 0:
+            editor.undo()
+        self.root.update()
+        self.assertEqual(len(editor.shapes), original,
+                         "undo stopped at a mid-session state instead of the "
+                         "original document")
+
+    def test_redo_still_reaches_the_latest_state(self):
+        editor = self.editor
+        editor.MAX_HISTORY = 5
+        self._add_shapes(12)
+        expected = len(editor.shapes)
+        while editor.history_index > 0:
+            editor.undo()
+        while editor.history_index < len(editor.history) - 1:
+            editor.redo()
+        self.root.update()
+        self.assertEqual(len(editor.shapes), expected)
+
+    def test_the_memory_budget_also_spares_the_baseline(self):
+        editor = self.editor
+        editor.MAX_HISTORY = 50
+        editor.MAX_HISTORY_BYTES = 1
+        self._add_shapes(6)
+        self.assertTrue(editor.history[0].get("baseline"))
+
+
+class ToastLayoutTests(unittest.TestCase):
+    """Every action on the capture toast must fit inside the card.
+
+    The Pin button used to be placed from a running total that was never checked
+    against the card width, so it hung off the right edge.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import ui_capture
+        cls.capture = ui_capture
+        T.set_theme("dark")
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.addCleanup(self._teardown)
+
+    def _teardown(self):
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def _toast(self, on_pin):
+        toast = self.capture.ResultToast(
+            self.root, Image.new("RGB", (1095, 668), "#aaccee"),
+            copied=True, on_open_editor=lambda: None, on_pin=on_pin)
+        toast.show()
+        for _ in range(12):
+            self.root.update()
+        self.addCleanup(toast.destroy)
+        return toast
+
+    def _layout(self, toast):
+        canvas = toast.canvas
+        rows = []
+        for item in canvas.find_all():
+            if canvas.type(item) != "window":
+                continue
+            widget = canvas.nametowidget(canvas.itemcget(item, "window"))
+            x, y = canvas.coords(item)
+            rows.append((y, x, widget.winfo_reqwidth()))
+        return int(canvas.cget("width")), rows
+
+    def test_pin_button_fits_inside_the_card(self):
+        toast = self._toast(lambda image: None)
+        width, rows = self._layout(toast)
+        self.assertEqual(len(rows), 4, "expected close + three actions")
+        for y, x, button_width in rows:
+            self.assertLessEqual(x + button_width, width - 8,
+                                 "a toast action overflows the card")
+
+    def test_card_widens_to_hold_the_extra_action(self):
+        without = self._toast(None)
+        width_without, _ = self._layout(without)
+        with_pin = self._toast(lambda image: None)
+        width_with, _ = self._layout(with_pin)
+        self.assertGreater(width_with, width_without,
+                           "the card did not grow to fit the Pin button")
+        self.assertGreaterEqual(width_without, self.capture.ResultToast.WIDTH)
+
+    def test_actions_on_the_same_row_do_not_overlap(self):
+        toast = self._toast(lambda image: None)
+        _width, rows = self._layout(toast)
+        by_row = {}
+        for y, x, button_width in rows:
+            by_row.setdefault(y, []).append((x, button_width))
+        for y, buttons in by_row.items():
+            buttons.sort()
+            for i in range(len(buttons) - 1):
+                self.assertLessEqual(buttons[i][0] + buttons[i][1],
+                                     buttons[i + 1][0],
+                                     "toast actions overlap on row %s" % y)
+
+    def test_without_a_pin_handler_there_is_no_pin_button(self):
+        toast = self._toast(None)
+        _width, rows = self._layout(toast)
+        self.assertEqual(len(rows), 3)
+
+
+class UpdateWiringTests(unittest.TestCase):
+    """The tray's "install update" path, without a network or a real exit.
+
+    The parts that can go wrong here are the hand-offs: the right URL must be
+    fetched, the swap must be given the downloaded file, and the app must only
+    quit once the helper is actually running - quitting first would leave the
+    user with no program at all.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.addCleanup(self._teardown)
+        self.icon = mock.Mock()
+        self.release = {
+            "tag": "v9.9.9",
+            "url": "https://example/tag",
+            "assets": [{"name": "ScreenShotTool.exe",
+                        "url": "https://example/app"}],
+        }
+
+    def _teardown(self):
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def _run(self, downloader, applier, release=None):
+        quit_calls = []
+        with mock.patch.object(self.app.messagebox, "showerror") as error, \
+                mock.patch.object(self.app.messagebox, "showinfo") as info:
+            started = self.app._install_update(
+                self.root, self.icon, release or self.release, "v9.9.9",
+                lambda: quit_calls.append(True),
+                downloader=downloader, applier=applier)
+            for _ in range(8):
+                self.root.update()
+        return started, quit_calls, error, info
+
+    def _recorder(self, result):
+        calls = []
+
+        def handler(*args, **kwargs):
+            calls.append((args, kwargs))
+            return result
+
+        return calls, handler
+
+    def test_successful_install_quits_so_the_helper_can_swap(self):
+        download_calls, downloader = self._recorder("C:/tmp/new.exe")
+        apply_calls, applier = self._recorder("C:/tmp/helper.bat")
+        started, quit_calls, error, _info = self._run(downloader, applier)
+        self.assertTrue(started)
+        self.assertTrue(quit_calls, "the app must quit for the swap to happen")
+        self.assertEqual(download_calls[0][0][0], "https://example/app",
+                         "the packaged exe asset must be the one downloaded")
+        self.assertEqual(apply_calls[0][0][0], "C:/tmp/new.exe")
+        self.assertEqual(apply_calls[0][0][1], sys.executable)
+        error.assert_not_called()
+
+    def test_download_progress_is_announced(self):
+        _calls, downloader = self._recorder("C:/tmp/new.exe")
+        _a, applier = self._recorder("C:/tmp/helper.bat")
+        self._run(downloader, applier)
+        self.icon.notify.assert_called()
+
+    def test_a_failed_download_keeps_the_current_build(self):
+        _calls, downloader = self._recorder(None)
+        apply_calls, applier = self._recorder("C:/tmp/helper.bat")
+        started, quit_calls, error, _info = self._run(downloader, applier)
+        self.assertTrue(started)
+        self.assertFalse(quit_calls, "a failed download must not quit the app")
+        self.assertFalse(apply_calls, "nothing was downloaded, so nothing to swap")
+        error.assert_called()
+
+    def test_a_failed_swap_keeps_the_current_build(self):
+        _calls, downloader = self._recorder("C:/tmp/new.exe")
+        _a, applier = self._recorder(None)
+        _started, quit_calls, error, _info = self._run(downloader, applier)
+        self.assertFalse(quit_calls,
+                         "quitting without a working helper would lose the app")
+        error.assert_called()
+
+    def test_a_release_without_an_exe_is_refused(self):
+        _calls, downloader = self._recorder("C:/tmp/new.exe")
+        apply_calls, applier = self._recorder("C:/tmp/helper.bat")
+        started, quit_calls, _error, info = self._run(
+            downloader, applier,
+            release={"tag": "v9.9.9", "url": "https://example/tag", "assets": []})
+        self.assertFalse(started)
+        self.assertFalse(quit_calls)
+        self.assertFalse(apply_calls)
+        info.assert_called()
+
+
 if __name__ == "__main__":
     unittest.main()

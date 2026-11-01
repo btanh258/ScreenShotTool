@@ -138,5 +138,144 @@ class AsyncTests(unittest.TestCase):
         self.assertTrue(any("callback failed" in line for line in captured.output))
 
 
+class UpdateInstallTests(unittest.TestCase):
+    """Downloading and swapping the new build in place.
+
+    The swap cannot happen from inside the running program on Windows, so the
+    module writes a helper script. These tests pin the parts that are easy to
+    get wrong: picking the right asset, never leaving a truncated download that
+    a later run would install, and refusing to "apply" a payload that is absent.
+    """
+
+    def _release(self, *assets):
+        return {"tag": "v9.9.9", "url": "https://example/tag",
+                "assets": list(assets)}
+
+    def test_picks_the_packaged_exe(self):
+        release = self._release(
+            {"name": "SHA256SUMS.txt", "url": "https://example/sums"},
+            {"name": "ScreenShotTool.exe", "url": "https://example/app"},
+        )
+        self.assertEqual(ui_updates.pick_update_asset(release),
+                         "https://example/app")
+
+    def test_falls_back_to_any_exe(self):
+        release = self._release({"name": "Other.EXE", "url": "https://example/o"})
+        self.assertEqual(ui_updates.pick_update_asset(release),
+                         "https://example/o")
+
+    def test_no_assets_means_no_in_app_install(self):
+        self.assertIsNone(ui_updates.pick_update_asset(self._release()))
+        self.assertIsNone(ui_updates.pick_update_asset({}))
+        self.assertIsNone(ui_updates.pick_update_asset(None))
+
+    def test_asset_without_a_url_is_ignored(self):
+        release = self._release({"name": "ScreenShotTool.exe", "url": ""})
+        self.assertIsNone(ui_updates.pick_update_asset(release))
+
+    def test_release_payload_carries_the_assets(self):
+        payload = {
+            "tag_name": "v2.0.0",
+            "html_url": "https://example/tag",
+            "assets": [
+                {"name": "ScreenShotTool.exe",
+                 "browser_download_url": "https://example/app", "size": 123},
+                "not a dict",
+            ],
+        }
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps(payload).encode("utf-8")
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=False)
+        with mock.patch("urllib.request.urlopen", return_value=response):
+            release, reason = ui_updates.fetch_latest_release_detailed()
+        self.assertEqual(reason, "ok")
+        self.assertEqual(release["assets"],
+                         [{"name": "ScreenShotTool.exe",
+                           "url": "https://example/app", "size": 123}])
+        self.assertEqual(ui_updates.pick_update_asset(release),
+                         "https://example/app")
+
+    def test_download_writes_the_whole_payload(self):
+        import tempfile
+        source = Path(tempfile.mkdtemp()) / "payload.bin"
+        body = b"release-binary" * 5000
+        source.write_bytes(body)
+        target = source.parent / "downloaded.exe"
+        result = ui_updates.download_asset(source.as_uri(), target)
+        self.assertEqual(result, str(target))
+        self.assertEqual(target.read_bytes(), body)
+        # The temporary sibling must not survive a successful download.
+        self.assertFalse(Path(str(target) + ".part").exists())
+
+    def test_download_accepts_a_path_object(self):
+        import tempfile
+        source = Path(tempfile.mkdtemp()) / "payload.bin"
+        source.write_bytes(b"abc")
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "out.exe"
+            self.assertEqual(ui_updates.download_asset(source.as_uri(), target),
+                             str(target))
+            self.assertEqual(target.read_bytes(), b"abc")
+
+    def test_failed_download_leaves_nothing_behind(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "missing.exe"
+            result = ui_updates.download_asset(
+                (Path(folder) / "does-not-exist.bin").as_uri(), target)
+            self.assertIsNone(result)
+            self.assertFalse(target.exists())
+            self.assertFalse(Path(str(target) + ".part").exists())
+
+    def test_download_reports_progress(self):
+        import tempfile
+        source = Path(tempfile.mkdtemp()) / "payload.bin"
+        source.write_bytes(b"x" * 4096)
+        seen = []
+        with tempfile.TemporaryDirectory() as folder:
+            ui_updates.download_asset(source.as_uri(),
+                                      Path(folder) / "out.bin",
+                                      chunk_size=1024,
+                                      progress=lambda done, total: seen.append(done))
+        self.assertTrue(seen)
+        self.assertEqual(seen[-1], 4096)
+
+    def test_apply_update_refuses_a_missing_payload(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertIsNone(ui_updates.apply_update(
+                Path(folder) / "nope.exe", Path(folder) / "current.exe"))
+
+    def test_apply_update_returns_a_launched_helper(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        new = folder / "new.exe"
+        old = folder / "old.exe"
+        new.write_bytes(b"NEW")
+        old.write_bytes(b"OLD")
+        with mock.patch("subprocess.Popen") as popen:
+            helper = ui_updates.apply_update(new, old, relaunch=False)
+        self.assertIsNotNone(helper)
+        self.assertTrue(Path(helper).is_file())
+        script = Path(helper).read_text(encoding="utf-8")
+        self.assertIn(str(old), script)
+        self.assertIn(str(new), script)
+        popen.assert_called_once()
+
+    def test_the_helper_restarts_the_binary_and_cleans_up(self):
+        template = ui_updates._UPDATE_SCRIPT
+        self.assertIn('start "" "%OLD%"', template)
+        self.assertIn("goto retry", template)
+        self.assertIn('del "%~f0"', template)
+        # An unbounded retry would spin forever if a virus scanner held the file.
+        self.assertIn("GEQ", template)
+
+    def test_can_self_update_tracks_the_frozen_flag(self):
+        with mock.patch.object(sys, "frozen", True, create=True):
+            self.assertTrue(ui_updates.can_self_update())
+        self.assertFalse(ui_updates.can_self_update())
+
+
 if __name__ == "__main__":
     unittest.main()

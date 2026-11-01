@@ -1024,6 +1024,9 @@ class ResultToast:
         self._thumb_photo = None
         self._icon_photo = None
         self._buttons = []
+        # Resolved by _paint() from the measured button widths; WIDTH is the
+        # designed minimum, not the final size.
+        self._width = self.WIDTH
 
     # -- public API -----------------------------------------------------
     def show(self):
@@ -1162,7 +1165,44 @@ class ResultToast:
         if canvas is None:
             return
         canvas.delete("all")
-        screen_w, screen_h = self.WIDTH, self.HEIGHT
+
+        # -- actions ----------------------------------------------------------
+        # Built before anything is drawn, because their measured width decides
+        # how wide the card has to be.  The card used to be a fixed WIDTH and
+        # the Pin button was positioned from a running total that was never
+        # checked against it, so adding a third action pushed "Ghim" off the
+        # right edge of the toast.
+        action = W.PillButton(
+            canvas, "Mở trình chỉnh sửa", command=self._open_editor,
+            variant="primary", glyph=T.GLYPH.pen,
+            fontspec=T.FONTS.small_strong, padx=14, height=28,
+            surface=T.COLORS.panel)
+        dismiss = W.PillButton(
+            canvas, "Đóng", command=self.destroy,
+            variant="ghost", fontspec=T.FONTS.small_strong, padx=14,
+            height=28, surface=T.COLORS.panel)
+        action_row = [action, dismiss]
+        # Pin is only offered when a handler is wired; a button that does
+        # nothing is worse than no button.
+        if self.on_pin is not None:
+            action_row.append(W.PillButton(
+                canvas, "Ghim", command=self._pin,
+                variant="ghost", fontspec=T.FONTS.small_strong, padx=14,
+                height=28, surface=T.COLORS.panel))
+
+        close_btn = W.IconButton(
+            canvas, T.GLYPH.close, command=self.destroy,
+            size=26, glyph_size=12, variant="ghost",
+            surface=T.COLORS.panel, tooltip="Đóng")
+
+        gap = 8
+        needed = self._TEXT_X
+        needed += sum(button.winfo_reqwidth() for button in action_row)
+        needed += gap * (len(action_row) - 1)
+        needed += 16                      # breathing room at the right edge
+        self._width = max(self.WIDTH, needed)
+        screen_w, screen_h = self._width, self.HEIGHT
+        canvas.configure(width=screen_w, height=screen_h)
 
         # -- card ------------------------------------------------------------
         T.round_rect(canvas, 1, 1, screen_w - 1, screen_h - 1, T.RADIUS.md,
@@ -1202,44 +1242,15 @@ class ResultToast:
                            fill=T.COLORS.text_secondary, font=T.FONTS.small)
 
         # -- close glyph -----------------------------------------------------
-        close_btn = W.IconButton(
-            canvas, T.GLYPH.close, command=self.destroy,
-            size=26, glyph_size=12, variant="ghost",
-            surface=T.COLORS.panel, tooltip="Đóng")
-        canvas.create_window(screen_w - 16 - 26, 10, anchor="nw", window=close_btn)
-        self._buttons = [close_btn]
+        canvas.create_window(screen_w - 16 - 26, 10, anchor="nw",
+                             window=close_btn)
 
-        # -- actions ----------------------------------------------------------
-        action = W.PillButton(
-            canvas, "Mở trình chỉnh sửa", command=self._open_editor,
-            variant="primary", glyph=T.GLYPH.pen,
-            fontspec=T.FONTS.small_strong, padx=14, height=28,
-            surface=T.COLORS.panel)
-        action_x = self._TEXT_X
-        action_y = 58
-        action_width = action.winfo_reqwidth()
-        canvas.create_window(action_x, action_y, anchor="nw", window=action)
-
-        dismiss = W.PillButton(
-            canvas, "Đóng", command=self.destroy,
-            variant="ghost", fontspec=T.FONTS.small_strong, padx=14,
-            height=28, surface=T.COLORS.panel)
-        canvas.create_window(action_x + action_width + 8, action_y, anchor="nw",
-                             window=dismiss)
-        self._buttons.extend([action, dismiss])
-
-        # Pin is only offered when a handler is wired; a button that does
-        # nothing is worse than no button.
-        if self.on_pin is not None:
-            pin = W.PillButton(
-                canvas, "Ghim", command=self._pin,
-                variant="ghost", fontspec=T.FONTS.small_strong, padx=14,
-                height=28, surface=T.COLORS.panel)
-            dismiss_width = dismiss.winfo_reqwidth()
-            canvas.create_window(
-                action_x + action_width + dismiss_width + 16, action_y,
-                anchor="nw", window=pin)
-            self._buttons.append(pin)
+        # -- actions, laid out left to right from the measured widths ---------
+        cursor = self._TEXT_X
+        for button in action_row:
+            canvas.create_window(cursor, 58, anchor="nw", window=button)
+            cursor += button.winfo_reqwidth() + gap
+        self._buttons = [close_btn] + action_row
 
         # -- auto-dismiss progress track --------------------------------------
         track_y = screen_h - 12
@@ -1259,7 +1270,7 @@ class ResultToast:
                 pass
             self._progress_fill = None
         ratio = max(0.0, min(1.0, float(ratio)))
-        track_x1, track_x2 = 16, self.WIDTH - 16
+        track_x1, track_x2 = 16, self._width - 16
         width = (track_x2 - track_x1) * ratio
         if width < 1:
             return
@@ -1277,7 +1288,7 @@ class ResultToast:
             window.update_idletasks()
         except tk.TclError:
             return
-        width, height = self.WIDTH, self.HEIGHT
+        width, height = self._width, self.HEIGHT
         left, top, right, bottom = _work_area()
         if right is None or bottom is None:
             right = window.winfo_screenwidth()
@@ -1303,7 +1314,7 @@ class ResultToast:
         offset = int(round(10 * (1.0 - progress)))
         try:
             window.geometry(
-                f"{self.WIDTH}x{self.HEIGHT}+{self._target_x}+{self._target_y + offset}")
+                f"{self._width}x{self.HEIGHT}+{self._target_x}+{self._target_y + offset}")
         except tk.TclError:
             return
         if step + 1 < steps:
@@ -1336,7 +1347,7 @@ class ResultToast:
             if float(self.window.attributes("-alpha")) < 1.0:
                 self.window.attributes("-alpha", 1.0)
                 self.window.geometry(
-                    f"{self.WIDTH}x{self.HEIGHT}"
+                    f"{self._width}x{self.HEIGHT}"
                     f"+{self._target_x}+{self._target_y}")
         except (tk.TclError, ValueError, TypeError):
             pass

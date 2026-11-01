@@ -1,4 +1,4 @@
-"""Check GitHub for a newer release.
+"""Check GitHub for a newer release, and install it.
 
 Kept separate from the application module so it can be tested without Tk, and so
 the network call is a single, easy-to-stub function. The app itself is a tray
@@ -8,6 +8,10 @@ something a local screenshot tool should not do without being asked.
 """
 import json
 import logging
+import os
+import subprocess
+import sys
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -16,7 +20,14 @@ log = logging.getLogger(__name__)
 
 RELEASES_API = "https://api.github.com/repos/btanh258/ScreenShotTool/releases/latest"
 TIMEOUT_SECONDS = 8
+# A release binary is ~70 MB, so the download gets its own, much longer budget:
+# TIMEOUT_SECONDS is per socket operation and would abort a slow but healthy
+# transfer when the user is on a poor connection.
+DOWNLOAD_TIMEOUT_SECONDS = 60
 USER_AGENT = "ScreenShotTool-update-check"
+
+# Name of the packaged binary inside a release.
+UPDATE_ASSET_NAME = "ScreenShotTool.exe"
 
 
 def parse_version(text):
@@ -103,7 +114,183 @@ def fetch_latest_release_detailed(timeout=TIMEOUT_SECONDS):
         "url": payload.get("html_url") or "",
         "notes": payload.get("body") or "",
         "name": payload.get("name") or "",
+        # Kept so the caller can install the update without a second request.
+        "assets": [
+            {
+                "name": asset.get("name") or "",
+                "url": asset.get("browser_download_url") or "",
+                "size": asset.get("size") or 0,
+            }
+            for asset in (payload.get("assets") or [])
+            if isinstance(asset, dict)
+        ],
     }, "ok"
+
+
+def can_self_update():
+    """Replacing the running binary only makes sense for the packaged build.
+
+    Running from source, there is nothing to swap: the "program" is the
+    interpreter, so the caller falls back to opening the release page.
+    """
+    return bool(getattr(sys, "frozen", False))
+
+
+def pick_update_asset(release):
+    """Download URL of the packaged exe inside ``release``, or None.
+
+    Falls back to any asset ending in .exe so a renamed binary still updates,
+    and never raises: an unusable release just means no in-app update.
+    """
+    if not isinstance(release, dict):
+        return None
+    fallback = None
+    for asset in release.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        url = asset.get("url") or ""
+        if not url:
+            continue
+        name = (asset.get("name") or "").lower()
+        if name == UPDATE_ASSET_NAME.lower():
+            return url
+        if fallback is None and name.endswith(".exe"):
+            fallback = url
+    return fallback
+
+
+def download_asset(url, destination, timeout=DOWNLOAD_TIMEOUT_SECONDS,
+                   progress=None, chunk_size=256 * 1024):
+    """Download ``url`` to ``destination``; the path, or None on failure.
+
+    Writes to a temporary sibling and renames on success, so an interrupted
+    download can never leave a truncated exe behind that a later run would
+    happily install.
+    """
+    if not url:
+        return None
+    # Accept a Path as well as a str: string concatenation below would blow up
+    # on anything but a plain path string.
+    destination = os.fspath(destination)
+    try:
+        os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
+    except OSError:
+        log.exception("Could not create the download directory")
+        return None
+
+    partial = destination + ".part"
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            total = int(response.headers.get("Content-Length") or 0)
+            written = 0
+            with open(partial, "wb") as handle:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    written += len(chunk)
+                    if progress is not None:
+                        try:
+                            progress(written, total)
+                        except Exception:
+                            log.debug("Download progress callback failed",
+                                      exc_info=True)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        log.info("Download failed: %s", exc)
+        _quiet_remove(partial)
+        return None
+
+    if os.path.getsize(partial) <= 0:
+        log.info("Download produced an empty file")
+        _quiet_remove(partial)
+        return None
+    try:
+        os.replace(partial, destination)
+    except OSError:
+        log.exception("Could not move the download into place")
+        _quiet_remove(partial)
+        return None
+    return destination
+
+
+def _quiet_remove(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+# Windows refuses to overwrite a running executable, so the swap has to happen
+# after this process exits. The helper retries the move instead of polling for
+# the pid: the move failing is the exact condition it needs to wait for, and it
+# keeps retrying only until the process lets go of the file.
+_UPDATE_SCRIPT = r"""@echo off
+setlocal
+set "OLD={old}"
+set "NEW={new}"
+set /a tries=0
+:retry
+set /a tries+=1
+move /y "%NEW%" "%OLD%" >nul 2>&1
+if not errorlevel 1 goto swapped
+if %tries% GEQ 120 goto failed
+ping -n 2 127.0.0.1 >nul
+goto retry
+:failed
+start "" "%OLD%"
+del "%~f0" >nul 2>&1
+exit /b 1
+:swapped
+del "%NEW%" >nul 2>&1
+start "" "%OLD%"
+del "%~f0" >nul 2>&1
+exit /b 0
+"""
+
+
+def apply_update(new_exe, current_exe, relaunch=True):
+    """Replace ``current_exe`` with ``new_exe`` and start it, via a helper.
+
+    Returns the path of the helper script that was launched, or None. The caller
+    is expected to exit immediately afterwards: the helper waits for this
+    process to release the executable, then swaps the files.
+    """
+    new_exe = os.path.abspath(new_exe)
+    current_exe = os.path.abspath(current_exe)
+    if not os.path.isfile(new_exe):
+        log.info("Update payload is missing: %s", new_exe)
+        return None
+
+    script = _UPDATE_SCRIPT.format(old=current_exe, new=new_exe)
+    if not relaunch:
+        script = script.replace('start "" "%OLD%"', "rem no relaunch")
+    helper = os.path.join(tempfile.gettempdir(), "screenshotool_update.bat")
+    try:
+        with open(helper, "w", encoding="utf-8", newline="\r\n") as handle:
+            handle.write(script)
+    except OSError:
+        log.exception("Could not write the update helper")
+        return None
+
+    flags = 0
+    for name in ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"):
+        flags |= getattr(subprocess, name, 0)
+    try:
+        subprocess.Popen(
+            ["cmd", "/c", helper],
+            creationflags=flags,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError:
+        log.exception("Could not launch the update helper")
+        return None
+    log.info("Update helper launched to replace %s", current_exe)
+    return helper
 
 
 def check_async(current_version, callback):

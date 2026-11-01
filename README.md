@@ -87,13 +87,15 @@ Tính năng này cứu bạn khi lỡ tay chụp đè hoặc đóng editor trư�
 | Giao diện | (đã chuyển vào editor — xem mục **Sáng / tối** bên dưới) |
 | Mở ảnh… (`Ctrl+O`) | Mở file ảnh có sẵn trong editor |
 | Ảnh gần đây | Mở lại ảnh vừa chụp, hoặc xóa lịch sử |
-| Kiểm tra cập nhật | Hỏi GitHub xem có bản mới |
+| Kiểm tra cập nhật | Tải bản mới và thay thế bản đang chạy |
 | Giới thiệu (v…) | Bảng phím tắt và phiên bản |
 | Thoát | Thoát hoàn toàn |
 
 **Nếu phím tắt bị ứng dụng khác chiếm:** ScreenShotTool sẽ **thông báo một lần** qua khay hệ thống và ghi vào log, thay vì im lặng để phím không hoạt động. Bạn vẫn chụp được bằng menu khay, hoặc đổi phím trong **Giới thiệu → Giảm phím tắt**.
 
-**Về "Kiểm tra cập nhật":** tính năng này gọi API công khai của GitHub, nên chỉ hoạt động khi kho mã nguồn **công khai**. Với kho riêng tư, GitHub trả về 404 và ứng dụng sẽ báo đúng là "không tìm thấy bản phát hành công khai" — không phải lỗi mạng. Muốn tự kiểm tra, hãy để kho ở chế độ công khai.
+**Về "Kiểm tra cập nhật":** tính năng này gọi API công khai của GitHub, nên chỉ hoạt động khi kho mã nguồn **công khai**. Với kho riêng tư, GitHub trả về 404 và ứng dụng sẽ báo đúng là "không tìm thấy bản phát hành công khai" — không phải lỗi mạng.
+
+Khi có bản mới, tool hỏi rồi **tự tải và thay thế bản cũ**: tải file `.exe` từ release về thư mục tạm, kiểm tra tải xong mới dùng, rồi một script phụ chờ tiến trình hiện tại thoát (Windows khoá file đang chạy), đổi tên file và khởi động lại chính tool. Không cần mở trình duyệt hay copy file bằng tay. Nếu tải hỏng, bản đang dùng vẫn nguyên vẹn.
 
 ### Chỉnh sửa ảnh
 
@@ -102,7 +104,7 @@ Editor hỗ trợ các công cụ:
 - **Chọn**: chọn, kéo di chuyển annotation; `Ctrl+click` chọn nhiều object; kéo marquee để chọn nhóm; `Ctrl+A` chọn tất cả.
 - **Cắt**: kéo vùng cần giữ, nhấn `Enter` để xác nhận hoặc `Esc` để hủy.
 - **Xóa**: xóa pixel nền trong vùng kéo chọn nhưng giữ annotation trong model.
-- **Bút** và **Dạ quang**: vẽ tự do với độ dày và màu đang chọn.
+- **Bút** và **Dạ quang**: vẽ tự do với độ dày và màu đang chọn. Bấm rồi thả mà không kéo sẽ để lại một chấm tròn.
 - **Chữ nhật**, **Oval**, **Mũi tên**: thêm hình chú thích; giữ `Shift` khi vẽ oval để tạo hình tròn.
 - **Văn bản**: click vào ảnh để nhập chữ; double-click văn bản trong chế độ Chọn để sửa.
 - **Làm mờ**: kéo vùng cần làm mờ.
@@ -202,7 +204,7 @@ python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-Bộ test gồm **296 test**:
+Bộ test gồm **329 test**:
 
 | File | Số test | Nội dung |
 |---|---|---|
@@ -210,8 +212,8 @@ Bộ test gồm **296 test**:
 | `tests/test_ui_parity.py` | 86 | Hệ thống thiết kế: token, helper màu, component, hành vi widget |
 | `tests/test_ui_smoke.py` | 71 | Tích hợp trên ứng dụng thật: contract, đường dẫn sự kiện, wiring dialog |
 | `tests/test_runtime_paths.py` | 39 | Đường lỗi: config hỏng/thiếu, clipboard khoá, registry, thiếu icon, hotkey bị chiếm |
-| `tests/test_ui_features.py` | 41 | Undo copy-on-write + ngân sách bộ nhớ, fit-to-window, debounce resize, 4 định dạng xuất, lịch sử ảnh, ghim ảnh, đổi theme trực tiếp trong editor + tương phản WCAG |
-| `tests/test_updates.py` | 18 | So sánh phiên bản, lý do lỗi (404 / mất mạng / rate limit), callback nền |
+| `tests/test_ui_features.py` | 61 | Undo copy-on-write + ngân sách bộ nhớ, sàn hoàn tác giữ nguyên bản gốc, fit-to-window, debounce resize, 4 định dạng xuất, lịch sử ảnh, ghim ảnh, đổi theme trực tiếp trong editor + tương phản WCAG, chấm tròn cho bút/dạ quang, bố cục toast |
+| `tests/test_updates.py` | 31 | So sánh phiên bản, lý do lỗi (404 / mất mạng / rate limit), callback nền, chọn asset, tải về (không để lại file dở), script thay thế bản cũ |
 | `tests/test_tray_regressions.py` | 18 | Chống tái phát 3 lỗi v1.2.0: menu khay crash, "Giới thiệu" không mở, báo sai lỗi mạng |
 | `tests/test_multi_monitor.py` | 11 | Toạ độ đa màn hình (gốc âm), snapping cửa sổ, DPI awareness |
 

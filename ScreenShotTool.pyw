@@ -17,6 +17,7 @@ import sys
 import os
 import json
 import functools
+import tempfile
 import threading
 import pystray
 from pystray import MenuItem as item
@@ -85,7 +86,7 @@ except AttributeError:
     RESAMPLE = Image.LANCZOS
 
 APP_NAME = "ScreenShotTool"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Where the config lives.
@@ -386,9 +387,11 @@ class _ToolRailButton(W.RailButton):
 
 class ImageEditor(EditorExportMixin):
     # Undo depth. The old cap of 11 existed because each step copied the whole
-    # image; snapshots now share one, so annotation-only editing gets a much
-    # deeper trail for a fraction of the memory.
-    MAX_HISTORY = 50
+    # image; snapshots now share one, so annotation-only edits cost nothing per
+    # step and the trail can be much deeper. 50 was still shallow enough that a
+    # normal marking-up session hit it, so the depth is now generous and
+    # MAX_HISTORY_BYTES is the real guard on memory.
+    MAX_HISTORY = 200
 
     # Total image bytes the history may hold. Destructive edits (crop, erase,
     # transform) each keep their own image, so depth alone would let 50 crops of
@@ -1339,7 +1342,13 @@ class ImageEditor(EditorExportMixin):
         state = {
             'image': self.pil_image,
             'w': self.orig_w, 'h': self.orig_h,
-            'shapes': self.clone_shapes(self.shapes)
+            'shapes': self.clone_shapes(self.shapes),
+            # The first snapshot of a document is the undo floor. It is flagged
+            # so _trim_history never discards it: without this, a long session
+            # silently pushed the original image out of the stack and undoing
+            # everything stopped at some mid-session state where the objects
+            # drawn before it looked deleted.
+            'baseline': not self.history,
         }
         self.history.append(state)
         self._trim_history()
@@ -1354,21 +1363,31 @@ class ImageEditor(EditorExportMixin):
         cost 50x. Measuring had exactly that: 11 crops held 86.5 MB with the cap
         at 50 versus 65.3 MB with the old cap of 11. The budget caps the real
         cost instead of guessing depth from step count.
+
+        The baseline snapshot is exempt: it is the document as it was opened, and
+        dropping it is what made a long session's undo floor land on an arbitrary
+        mid-session state, so the objects drawn before that point appeared to
+        have been deleted with no way back.
         """
-        # Drop from the oldest end, but never the entry at history_index (that
-        # would make the visible state disappear) and keep at least one.
         while len(self.history) > self.MAX_HISTORY:
-            if self.history_index > 0:
-                self.history.pop(0)
-                self.history_index -= 1
-            else:
+            if not self._drop_oldest_snapshot():
                 break
         while len(self.history) > 1 and self._history_bytes() > self.MAX_HISTORY_BYTES:
-            if self.history_index <= 0:
-                # Nothing older to drop: the newest image alone is over budget.
+            if not self._drop_oldest_snapshot():
                 break
-            self.history.pop(0)
-            self.history_index -= 1
+
+    def _drop_oldest_snapshot(self):
+        """Discard the oldest disposable snapshot. False when none may go.
+
+        Index 0 is the baseline and is skipped, so the candidate is index 1. The
+        current state and the newest state are never candidates.
+        """
+        drop_at = 1 if self.history and self.history[0].get('baseline') else 0
+        if drop_at >= len(self.history) - 1 or drop_at >= self.history_index:
+            return False
+        self.history.pop(drop_at)
+        self.history_index -= 1
+        return True
 
     def _history_bytes(self):
         """Bytes of image data the history holds, counting shared images once."""
@@ -1601,7 +1620,15 @@ class ImageEditor(EditorExportMixin):
                 self.canvas.create_image(draw_x, draw_y, anchor="nw", image=tk_img, tags=(tag,))
                 
             elif t == 'pen':
-                self.canvas.create_line(c, fill=col, width=w_shape, capstyle=tk.ROUND, joinstyle=tk.ROUND, smooth=True, tags=(tag,))
+                if len(c) <= 2:
+                    # A click with no drag is a dot. Tk draws nothing for a
+                    # single-point line, which is why the dot silently vanished.
+                    r = max(1.0, w_shape / 2.0)
+                    self.canvas.create_oval(c[0] - r, c[1] - r,
+                                            c[0] + r, c[1] + r,
+                                            fill=col, outline=col, tags=(tag,))
+                else:
+                    self.canvas.create_line(c, fill=col, width=w_shape, capstyle=tk.ROUND, joinstyle=tk.ROUND, smooth=True, tags=(tag,))
             elif t == 'rect':
                 self.canvas.create_rectangle(c[0], c[1], c[2], c[3], outline=col, width=w_shape, tags=(tag,))
             elif t == 'oval':
@@ -1862,7 +1889,10 @@ class ImageEditor(EditorExportMixin):
         if t == "highlight":
             self.canvas.delete("temp_drag")
             c = s['coords']
-            if len(c) < 4: self.shapes.pop(); return
+            # A single point is a click, not an unfinished stroke: it becomes a
+            # round highlighter dot. It used to be discarded outright, so a
+            # click did nothing at all.
+            if len(c) < 2: self.shapes.pop(); return
             
             w = s['width'] * 4; pad = w + 4
             min_x, max_x = min(c[0::2]) - pad, max(c[0::2]) + pad
@@ -1877,10 +1907,14 @@ class ImageEditor(EditorExportMixin):
             rgb = self.top.winfo_rgb(s['color'])
             hl_color = (rgb[0]//256, rgb[1]//256, rgb[2]//256, 120)
             
-            draw.line(flat_local, fill=hl_color, width=int(w*scale_aa), joint="curve")
+            # draw.line needs two distinct points; a single-point stroke is
+            # painted entirely by the end-cap ellipses below.
+            if len(flat_local) >= 4:
+                draw.line(flat_local, fill=hl_color, width=int(w*scale_aa), joint="curve")
             r = int(w * scale_aa / 2)
             draw.ellipse([flat_local[0]-r, flat_local[1]-r, flat_local[0]+r, flat_local[1]+r], fill=hl_color)
-            draw.ellipse([flat_local[-2]-r, flat_local[-1]-r, flat_local[-2]+r, flat_local[-1]+r], fill=hl_color)
+            if len(flat_local) >= 4:
+                draw.ellipse([flat_local[-2]-r, flat_local[-1]-r, flat_local[-2]+r, flat_local[-1]+r], fill=hl_color)
             
             s['orig_pil_img'] = hl_img_aa.resize((bw, bh), RESAMPLE)
             s['min_x'], s['min_y'] = min_x, min_y
@@ -1934,6 +1968,11 @@ class ImageEditor(EditorExportMixin):
                 self.save_state()
 
         elif t in ["pen", "rect", "oval", "arrow"]:
+            # A dot painted nothing on the canvas during the press, because the
+            # brush previews its stroke as it is dragged. Render it before
+            # snapshotting so the click is visible immediately.
+            if t == "pen" and len(s['coords']) <= 2:
+                self.redraw_all()
             self.save_state()
 
     def cancel_crop_or_text(self):
@@ -2064,10 +2103,14 @@ class ImageEditor(EditorExportMixin):
                 w_aa = w * scale_aa
                 
                 if s['type'] == 'pen':
-                    draw_aa.line(c_aa, fill=col, width=int(w_aa), joint="curve")
+                    # Keep a single-point stroke exportable as a dot: draw.line
+                    # needs two points, so the end caps carry it alone.
+                    if len(c_aa) >= 4:
+                        draw_aa.line(c_aa, fill=col, width=int(w_aa), joint="curve")
                     r = w_aa / 2
                     draw_aa.ellipse([c_aa[0]-r, c_aa[1]-r, c_aa[0]+r, c_aa[1]+r], fill=col)
-                    draw_aa.ellipse([c_aa[-2]-r, c_aa[-1]-r, c_aa[-2]+r, c_aa[-1]+r], fill=col)
+                    if len(c_aa) >= 4:
+                        draw_aa.ellipse([c_aa[-2]-r, c_aa[-1]-r, c_aa[-2]+r, c_aa[-1]+r], fill=col)
                     
                 elif s['type'] == 'rect':
                     # Bù trừ tọa độ do PIL vẽ viền hướng vào trong (inward)
@@ -2410,6 +2453,61 @@ def _retint_open_editors(exclude=None):
             logging.exception("Could not re-theme an open editor window")
 
 
+def _install_update(root, icon, release, tag, quit_app,
+                    downloader=None, applier=None):
+    """Download the new build and hand it to the swap helper.
+
+    Runs off the UI thread. The swap is delegated to a helper script because
+    Windows will not let a process overwrite its own executable: the file is only
+    released once this process exits, so the helper waits for that, moves the new
+    build into place and starts it again. ``quit_app`` is therefore called only
+    once the helper is running.
+
+    ``downloader`` and ``applier`` exist so the wiring can be tested without a
+    network, and ``quit_app`` so a test does not have to exit its own process.
+    """
+    downloader = downloader or ui_updates.download_asset
+    applier = applier or ui_updates.apply_update
+
+    url = ui_updates.pick_update_asset(release)
+    if not url:
+        root.after(0, lambda: messagebox.showinfo(
+            "Cập nhật",
+            "Bản phát hành %s không kèm tệp .exe để tải." % tag, parent=root))
+        return False
+
+    try:
+        icon.notify("Đang tải bản %s…" % tag, APP_NAME)
+    except Exception:
+        logging.debug("Tray notification unavailable", exc_info=True)
+
+    safe_tag = tag.strip().lstrip("vV") or "update"
+    destination = os.path.join(tempfile.gettempdir(),
+                               "ScreenShotTool-%s.exe" % safe_tag)
+    logging.info("Downloading update %s from %s", tag, url)
+    downloaded = downloader(url, destination)
+
+    def finish():
+        if not downloaded:
+            messagebox.showerror(
+                "Cập nhật",
+                "Không tải được bản mới. Bản hiện tại vẫn dùng bình thường.\n"
+                "Có thể tải thủ công tại:\n%s" % release.get("url", ""),
+                parent=root)
+            return
+        if not applier(downloaded, sys.executable):
+            messagebox.showerror(
+                "Cập nhật",
+                "Đã tải xong nhưng chưa thay thế được tệp đang chạy.\n"
+                "Bản mới nằm ở:\n%s" % downloaded, parent=root)
+            return
+        logging.info("Update ready; handing over to the swap helper")
+        quit_app()
+
+    root.after(0, finish)
+    return True
+
+
 def show_info_dialog(parent=None, cfg=None):
     """Open the About / shortcut guide.
 
@@ -2648,6 +2746,13 @@ def main():
         root.destroy()
         os._exit(0)
 
+    def quit_for_update():
+        """Release the executable so the swap helper can replace it."""
+        hotkey_stop.set()
+        icon.stop()
+        root.destroy()
+        os._exit(0)
+
     def check_for_updates(icon, menu_item):
         """Ask GitHub for the latest release without blocking the tray."""
         def report(release, current, reason="ok"):
@@ -2658,19 +2763,35 @@ def main():
                         parent=root)
                     return
                 tag = release.get("tag") or "(không rõ)"
-                if ui_updates.is_newer(tag, current):
-                    answer = messagebox.askyesno(
-                        "Có bản mới",
-                        "Bản hiện tại: %s\nBản mới nhất: %s\n\n%s\n\n"
-                        "Mở trang tải về?" % (current, tag, release.get("url", "")),
-                        parent=root)
-                    if answer and release.get("url"):
-                        _open_in_browser(release["url"])
-                else:
+                if not ui_updates.is_newer(tag, current):
                     messagebox.showinfo(
                         "Kiểm tra cập nhật",
                         "Bạn đang dùng bản mới nhất (%s)." % current,
                         parent=root)
+                    return
+                # Offer the in-app install only when there is something to
+                # replace; running from source can only open the release page.
+                if ui_updates.can_self_update() and ui_updates.pick_update_asset(release):
+                    answer = messagebox.askyesno(
+                        "Có bản mới",
+                        "Bản hiện tại: %s\nBản mới nhất: %s\n\n"
+                        "Tải bản mới về và thay thế bản cũ ngay bây giờ?\n"
+                        "Tool sẽ tự khởi động lại sau khi cập nhật."
+                        % (current, tag),
+                        parent=root)
+                    if answer:
+                        threading.Thread(
+                            target=_install_update,
+                            args=(root, icon, release, tag, quit_for_update),
+                            daemon=True).start()
+                    return
+                answer = messagebox.askyesno(
+                    "Có bản mới",
+                    "Bản hiện tại: %s\nBản mới nhất: %s\n\n%s\n\n"
+                    "Mở trang tải về?" % (current, tag, release.get("url", "")),
+                    parent=root)
+                if answer and release.get("url"):
+                    _open_in_browser(release["url"])
             root.after(0, show)
 
         ui_updates.check_async(APP_VERSION, report)
