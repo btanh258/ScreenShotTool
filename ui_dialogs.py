@@ -191,13 +191,32 @@ def _shell(parent, title):
     dialog.title(title)
     dialog.configure(bg=T.COLORS.app)
     dialog.resizable(False, False)
+    # Only mark the dialog transient to a master that is actually on screen.
+    # Tk suppresses a transient child of a withdrawn toplevel, so doing this
+    # unconditionally made every tray-invoked dialog (the About guide, the
+    # hotkey editor) create a 1x1 window that never became visible - which is
+    # why the guide only appeared after a capture, when the editor was open.
+    owner = None
     try:
-        dialog.transient(parent.winfo_toplevel())
+        owner = parent.winfo_toplevel()
     except (AttributeError, tk.TclError):
-        pass
+        owner = None
+    if owner is not None and _is_on_screen(owner):
+        try:
+            dialog.transient(owner)
+        except tk.TclError:
+            pass
     T.apply_theme(dialog)
     dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
     return dialog
+
+
+def _is_on_screen(window):
+    """True when ``window`` is mapped and not withdrawn/iconified."""
+    try:
+        return bool(window.winfo_ismapped()) and window.state() == "normal"
+    except tk.TclError:
+        return False
 
 
 def _bind_recursive(widget, sequence, handler):

@@ -4,7 +4,7 @@ Every module in this redesign talks to its neighbours through the names below.
 **Do not rename or repurpose them.** If a change is genuinely required, message
 the Lead first — other agents are writing against these signatures concurrently.
 
-Repo root: `C:\Users\anh25\Downloads\Projects\TestUI\ScreenShotTool`
+Repo root: `<repo root>`
 
 ---
 

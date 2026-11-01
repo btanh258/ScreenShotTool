@@ -414,6 +414,11 @@ class ImageEditor(EditorExportMixin):
             pass
         T.apply_theme(self.top)
         T.apply_dark_titlebar(self.top)
+        # Registered so a theme switch elsewhere can repaint this window too.
+        _open_editors.add(self)
+        self.top.bind("<Destroy>",
+                      lambda e: _open_editors.discard(self) if e.widget is self.top else None,
+                      add="+")
 
         self.pil_image = pil_image.copy().convert("RGBA")
         self.orig_w, self.orig_h = self.pil_image.width, self.pil_image.height
@@ -464,29 +469,15 @@ class ImageEditor(EditorExportMixin):
 
         self.top.minsize(760, 520)
 
-        # The bottom strip is packed before the expanding body, otherwise the
-        # body would consume the whole cavity and squeeze the status bar out.
-        self.statusbar = W.StatusBar(self.top)
-        self.statusbar.pack(side="bottom", fill="x")
-
-        self._build_toolbar()      # header + tool rail + right inspector
-        self._build_canvas_area()  # centre stage; keeps self.canvas semantics
+        self._build_shell()
 
         self.tool_var.trace_add("write", lambda *args: self._on_tool_changed())
         self.color_var.trace_add("write", lambda *args: self._sync_color_widgets())
         self.width_var.trace_add("write", lambda *args: self._sync_width_widgets())
         self.top.bind("<Configure>", self._on_editor_resize)
 
-        self.canvas.bind("<ButtonPress-1>", self.on_press)
-        self.canvas.bind("<B1-Motion>", self.on_drag)
-        self.canvas.bind("<ButtonRelease-1>", self.on_release)
-        self.canvas.bind("<Double-Button-1>", self.on_double_click)
-        self.canvas.bind("<ButtonPress-2>", self.on_middle_press)
-        self.canvas.bind("<B2-Motion>", self.on_middle_drag)
-        self.canvas.bind("<ButtonRelease-2>", self.on_middle_release)
-        self.canvas.bind("<Motion>", self.on_mouse_move_editor)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-        
+        self._install_canvas_bindings()
+
         hotkeys = self.cfg.get("editor_hotkeys", {})
         self.top.bind("<Delete>", self.delete_selected)
         self.top.bind("<MouseWheel>", self.on_mouse_wheel)
@@ -537,8 +528,6 @@ class ImageEditor(EditorExportMixin):
         # never fires an "after" script whose widget no longer exists.
         self.top.bind("<Destroy>", self._on_top_destroy, add="+")
 
-        self.canvas.bind("<ButtonPress-1>", self._dismiss_inspector_overlay, add="+")
-
     def _on_escape(self, _event=None):
         """Single Escape handler: cancel an active edit, else close the drawer.
 
@@ -582,6 +571,75 @@ class ImageEditor(EditorExportMixin):
     # ------------------------------------------------------------------
     # Shell construction
     # ------------------------------------------------------------------
+    def _build_shell(self):
+        """Create every widget of the window from the active palette.
+
+        Extracted from ``__init__`` so switching themes can throw the whole
+        widget tree away and build it again: Tk bakes colours into a widget at
+        creation, so a live theme change means re-creating, not recolouring.
+        """
+        # The bottom strip is packed before the expanding body, otherwise the
+        # body would consume the whole cavity and squeeze the status bar out.
+        self.statusbar = W.StatusBar(self.top)
+        self.statusbar.pack(side="bottom", fill="x")
+
+        self._build_toolbar()      # header + tool rail + right inspector
+        self._build_canvas_area()  # centre stage; keeps self.canvas semantics
+
+    def _rebuild_for_theme(self):
+        """Rebuild the shell after a palette change, keeping widget bindings.
+
+        Order matters: the old tree is destroyed first so the new widgets get
+        their bindings without the stale ones firing, and the canvas
+        bindings are re-installed afterwards because they lived on a widget
+        that no longer exists.
+        """
+        for child in self.top.winfo_children():
+            child.destroy()
+        # Widget references stored on self point at the destroyed tree. Clearing
+        # them makes the builders create fresh ones instead of trying to
+        # place()/pack() a dead window (TclError: bad window path name).
+        self.text_entry = None
+        self._inspector_close = None
+        self._overlay_shadow = None
+        self._inspector_overlay = False
+        self._rail_compact = False
+        self._inspector_visible = True
+        self._brand_subtitle_visible = True
+        self._build_shell()
+        self._install_canvas_bindings()
+        self.top.bind("<Configure>", self._on_editor_resize)
+        self._last_layout_width = 0
+        try:
+            T.apply_dark_titlebar(self.top)
+        except Exception:
+            logging.debug("Could not re-tint the title bar", exc_info=True)
+        self._apply_layout(self.top.winfo_width())
+        self.redraw_all()
+        self.draw_selection_box()
+        self._sync_history_buttons()
+        self._sync_color_widgets()
+        self._sync_width_widgets()
+        self._on_tool_changed()
+
+    def _install_canvas_bindings(self):
+        """Mouse bindings on the canvas.
+
+        Split out so a rebuild can re-apply them; calling this twice would stack
+        duplicate handlers, so it is only ever invoked from ``__init__`` and
+        ``_rebuild_for_theme``.
+        """
+        self.canvas.bind("<ButtonPress-1>", self.on_press)
+        self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        self.canvas.bind("<Double-Button-1>", self.on_double_click)
+        self.canvas.bind("<ButtonPress-2>", self.on_middle_press)
+        self.canvas.bind("<B2-Motion>", self.on_middle_drag)
+        self.canvas.bind("<ButtonRelease-2>", self.on_middle_release)
+        self.canvas.bind("<Motion>", self.on_mouse_move_editor)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.bind("<ButtonPress-1>", self._dismiss_inspector_overlay, add="+")
+
     def _build_canvas_area(self):
         """Centre stage: the screenshot on a dark surface, plus both scrollbars."""
         self.body = tk.Frame(self.top, bg=T.COLORS.app)
@@ -660,6 +718,12 @@ class ImageEditor(EditorExportMixin):
             self.header, _glyph("info"), command=self.show_function_info,
             size=34, glyph_size=15, tooltip="Thông tin & phím tắt")
         self.btn_info.pack(side="right", padx=(T.SPACE.sm, 0))
+
+        self.btn_theme = W.IconButton(
+            self.header, _glyph("theme"), command=self.toggle_theme,
+            size=34, glyph_size=15, surface=T.COLORS.chrome,
+            tooltip="Đổi giao diện sáng / tối\nÁp dụng ngay, không cần mở lại")
+        self.btn_theme.pack(side="right", padx=(T.SPACE.sm, 0))
 
         W.Divider(self.header, orient="vertical").pack(side="right", fill="y",
                                                        pady=T.SPACE.md,
@@ -1139,6 +1203,32 @@ class ImageEditor(EditorExportMixin):
     def show_function_info(self):
         """Modern info / shortcut guide (see :mod:`ui_dialogs`)."""
         return show_info_dialog(self.top)
+
+    def toggle_theme(self):
+        """Flip between the light and dark palettes and rebuild this window.
+
+        Tk bakes colours into a widget when it is created, so the only honest
+        way to re-theme an open window is to build it again. Everything that
+        defines the document (image, shapes, history, selection, zoom) lives on
+        self rather than in the widgets, so the rebuild is lossless.
+        """
+        current = T.get_theme()
+        target = "dark" if current == "light" else "light"
+        applied = T.set_theme(target)
+        self.cfg["theme"] = applied
+        try:
+            save_config(self.cfg)
+        except Exception:
+            logging.exception("Could not persist the theme choice")
+        try:
+            self._rebuild_for_theme()
+        except Exception:
+            logging.exception("Could not rebuild the editor for the new theme")
+            raise
+        # Keep the other open editor windows in step: they hold the same palette
+        # reference, so they would otherwise repaint in the old colours.
+        _retint_open_editors(exclude=self)
+        return applied
 
     def open_hotkey_settings(self):
         """Editable hotkey card, wired to the same config the tray hotkey reads."""
@@ -2300,6 +2390,26 @@ def _open_in_browser(url):
         logging.exception("Could not open %s", url)
 
 
+def _retint_open_editors(exclude=None):
+    """Rebuild every other ImageEditor still on screen for the new palette.
+
+    Tk widgets keep the colour they were created with, so a window opened before
+    the theme change would stay in the old palette until it was closed and
+    reopened. Best-effort: a window that fails to rebuild must not take down the
+    one the user is working in.
+    """
+    for editor in list(_open_editors):
+        if editor is exclude:
+            continue
+        try:
+            if not editor.top.winfo_exists():
+                _open_editors.discard(editor)
+                continue
+            editor._rebuild_for_theme()
+        except Exception:
+            logging.exception("Could not re-theme an open editor window")
+
+
 def show_info_dialog(parent=None, cfg=None):
     """Open the About / shortcut guide.
 
@@ -2334,33 +2444,6 @@ def _pin_image(root, image):
     except Exception:
         logging.exception("Could not pin the image")
         return None
-
-
-def _set_theme(setting, root=None):
-    """Persist the theme choice and apply it.
-
-    Live re-theming would mean rebuilding every open window, since Tk widgets
-    bake their colours at construction. The setting is stored and the windows
-    already on screen keep their palette, which is what the tray menu promises by
-    saying the change applies from the next capture.
-    """
-    cfg = load_config()
-    cfg["theme"] = setting
-    try:
-        save_config(cfg)
-    except Exception:
-        logging.exception("Could not persist the theme setting")
-    applied = T.set_theme(T.resolve_theme(setting))
-    logging.info("Theme set to %s (resolved: %s)", setting, applied)
-    icon = _tray_icon_ref
-    if icon is not None:
-        try:
-            icon.notify("Đổi giao diện sang %s. Cửa sổ đang mở giữ nguyên màu cũ."
-                        % ("sáng" if applied == "light" else "tối"),
-                        APP_NAME)
-        except Exception:
-            logging.debug("Tray notification unavailable", exc_info=True)
-    return applied
 
 
 def _recent_menu_items(history, root, limit=8):
@@ -2436,6 +2519,11 @@ def open_image_from_disk(parent=None):
 
 
 _root_ref = None
+
+# Every ImageEditor window currently alive. A theme change has to rebuild all of
+# them, since each window holds widgets painted in the palette that existed when
+# it was created. Kept as a set of instances so a destroyed window can be pruned.
+_open_editors = set()
 
 
 def root_window_for_tk():
@@ -2598,11 +2686,6 @@ def main():
             item('10 giây', lambda icon, menu_item: root.after(0, lambda: app.start_snipping(10))),
         )),
         item('Khởi động cùng Windows', toggle_startup, checked=lambda item: check_startup()),
-        pystray.MenuItem('Giao diện', pystray.Menu(
-            item('Theo Windows', lambda icon, menu_item: root.after(0, lambda: _set_theme("system", root))),
-            item('Tối', lambda icon, menu_item: root.after(0, lambda: _set_theme("dark", root))),
-            item('Sáng', lambda icon, menu_item: root.after(0, lambda: _set_theme("light", root))),
-        )),
         pystray.Menu.SEPARATOR,
         item('Mở ảnh…', lambda icon, menu_item: root.after(0, open_image_from_disk)),
         pystray.Menu.SEPARATOR,

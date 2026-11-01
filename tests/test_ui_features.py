@@ -450,5 +450,148 @@ class PinnedImageTests(unittest.TestCase):
         pin.close()
 
 
+class LiveThemeSwitchTests(unittest.TestCase):
+    """The editor's theme button must repaint live and keep the document.
+
+    Tk freezes a widget's colours at creation, so the switch rebuilds the whole
+    widget tree. These tests exist because the first rebuild crashed with
+    "bad window path name": stale widget references from the old tree were
+    placed() again, and because a rebuild that silently dropped the shapes,
+    the history or the zoom would be worse than no feature at all.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        T.set_theme("dark")
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.editor = self.app.ImageEditor(
+            self.root, Image.new("RGB", (320, 240), (10, 200, 30)))
+        self.editor.top.state("normal")
+        for _ in range(10):
+            self.root.update()
+        self.addCleanup(self._teardown)
+
+    def _teardown(self):
+        T.set_theme("dark")
+        for widget in (self.editor.top, self.root):
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+
+    def _seed_document(self):
+        editor = self.editor
+        editor.shapes.append({"tag": "shape_1", "type": "rect",
+                              "color": "#ff0000", "width": 3,
+                              "coords": [10, 10, 120, 90]})
+        editor.save_state()
+        editor.set_zoom(0.75)
+        editor.redraw_all()
+        self.root.update()
+
+    def test_toggling_rewrites_the_palette_and_repaints_the_chrome(self):
+        self._seed_document()
+        before = self.editor.header.cget("bg")
+        applied = self.editor.toggle_theme()
+        for _ in range(10):
+            self.root.update()
+        self.assertEqual(applied, "light")
+        self.assertEqual(T.get_theme(), "light")
+        self.assertNotEqual(self.editor.header.cget("bg"), before)
+        self.assertEqual(self.editor.header.cget("bg"), T.COLORS_LIGHT.chrome)
+
+    def test_toggling_back_restores_the_dark_chrome(self):
+        self._seed_document()
+        self.editor.toggle_theme()
+        for _ in range(10):
+            self.root.update()
+        self.editor.toggle_theme()
+        for _ in range(10):
+            self.root.update()
+        self.assertEqual(T.get_theme(), "dark")
+        self.assertEqual(self.editor.header.cget("bg"), T.COLORS_DARK.chrome)
+
+    def test_shapes_history_zoom_and_selection_survive_the_rebuild(self):
+        self._seed_document()
+        before = {
+            "shapes": [(s["tag"], s["type"], list(s["coords"]))
+                       for s in self.editor.shapes],
+            "history": len(self.editor.history),
+            "index": self.editor.history_index,
+            "scale": self.editor.scale,
+            "pixel": self.editor.pil_image.getpixel((50, 50)),
+        }
+        self.editor.toggle_theme()
+        for _ in range(10):
+            self.root.update()
+        after = {
+            "shapes": [(s["tag"], s["type"], list(s["coords"]))
+                       for s in self.editor.shapes],
+            "history": len(self.editor.history),
+            "index": self.editor.history_index,
+            "scale": self.editor.scale,
+            "pixel": self.editor.pil_image.getpixel((50, 50)),
+        }
+        self.assertEqual(before, after)
+
+    def test_undo_still_works_on_the_rebuilt_window(self):
+        self._seed_document()
+        self.editor.toggle_theme()
+        for _ in range(10):
+            self.root.update()
+        index = self.editor.history_index
+        self.editor.undo()
+        self.assertLess(self.editor.history_index, index)
+        self.editor.redo()
+        self.assertEqual(self.editor.history_index, index)
+
+    def test_the_choice_is_persisted_to_the_config(self):
+        self._seed_document()
+        with mock.patch.object(self.app, "save_config") as save:
+            self.editor.toggle_theme()
+        save.assert_called_once()
+        self.assertEqual(save.call_args[0][0].get("theme"), "light")
+
+    def test_the_theme_button_exists_in_the_header(self):
+        self.assertTrue(hasattr(self.editor, "btn_theme"),
+                        "the editor header must expose the theme switch")
+        self.assertTrue(hasattr(self.editor, "toggle_theme"))
+
+    def test_other_open_editors_are_re_tinted_too(self):
+        other = self.app.ImageEditor(
+            self.root, Image.new("RGB", (60, 40), (5, 5, 5)))
+        other.top.state("normal")
+        for _ in range(10):
+            self.root.update()
+        try:
+            self._seed_document()
+            dark_other = other.header.cget("bg")
+            self.editor.toggle_theme()
+            for _ in range(10):
+                self.root.update()
+            self.assertNotEqual(other.header.cget("bg"), dark_other,
+                                "a second open window stayed in the old palette")
+        finally:
+            try:
+                other.top.destroy()
+            except tk.TclError:
+                pass
+
+    def test_no_stale_widget_reference_is_left_behind(self):
+        """The first rebuild died on a placed() widget from the destroyed tree."""
+        self._seed_document()
+        self.editor.toggle_theme()
+        for _ in range(10):
+            self.root.update()
+        # _overlay_shadow is recreated by the builders; it must be alive.
+        shadow = getattr(self.editor, "_overlay_shadow", None)
+        if shadow is not None:
+            self.assertTrue(shadow.winfo_exists())
+
+
 if __name__ == "__main__":
     unittest.main()

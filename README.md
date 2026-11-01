@@ -84,7 +84,7 @@ Tính năng này cứu bạn khi lỡ tay chụp đè hoặc đóng editor trư�
 | Chụp màn hình (`Alt+X`) | Chụp ngay |
 | Chụp sau | Chụp hẹn giờ 3/5/10 giây |
 | Khởi động cùng Windows | Bật/tắt tự chạy khi đăng nhập |
-| Giao diện | Chọn *Theo Windows* / *Tối* / *Sáng* |
+| Giao diện | (đã chuyển vào editor — xem mục **Sáng / tối** bên dưới) |
 | Mở ảnh… (`Ctrl+O`) | Mở file ảnh có sẵn trong editor |
 | Ảnh gần đây | Mở lại ảnh vừa chụp, hoặc xóa lịch sử |
 | Kiểm tra cập nhật | Hỏi GitHub xem có bản mới |
@@ -152,7 +152,9 @@ Editor dùng bố cục ba vùng: header (thao tác chính), rail dọc bên tr�
 
 **Responsive:** ở cửa sổ hẹp (dưới 1180px) bảng thuộc tính chuyển thành drawer nổi bên phải thay vì bị ẩn, nên mọi điều khiển vẫn truy cập được ở mọi kích thước cửa sổ (tối thiểu 760×520). Đóng drawer bằng nút ×, phím `Esc`, hoặc click vào canvas; mở lại bằng nút bánh răng trên header.
 
-**Sáng / tối:** mặc định bám theo thiết lập *Chế độ ứng dụng* của Windows. Đổi thủ công ở menu khay → **Giao diện**. Lựa chọn được lưu vào file cấu hình và áp dụng từ lần mở cửa sổ tiếp theo — Tkinter gắn màu vào widget lúc tạo, nên đổi màu cửa sổ đang mở sẽ cần dựng lại toàn bộ. Bảng màu sáng đã được kiểm tra độ tương phản WCAG AA (chữ chính ≥ 4.5:1, chữ phụ ≥ 3:1) bằng test tự động.
+**Sáng / tối:** mặc định bám theo thiết lập *Chế độ ứng dụng* của Windows. Trong editor, bấm nút **◑** ở góc phải header để đổi ngay — cửa sổ đang mở được dựng lại với bảng màu mới, ảnh, annotation, lịch sử hoàn tác và mức thu phóng đều giữ nguyên. Lựa chọn được lưu lại cho các lần mở sau, và mọi cửa sổ editor đang mở khác cũng đổi theo.
+
+Bảng màu sáng đã được kiểm tra độ tương phản WCAG AA (chữ chính ≥ 4.5:1, chữ phụ ≥ 3:1) bằng test tự động.
 
 ## Đóng gói EXE
 
@@ -200,7 +202,7 @@ python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-Bộ test gồm **288 test**:
+Bộ test gồm **296 test**:
 
 | File | Số test | Nội dung |
 |---|---|---|
@@ -208,7 +210,7 @@ Bộ test gồm **288 test**:
 | `tests/test_ui_parity.py` | 86 | Hệ thống thiết kế: token, helper màu, component, hành vi widget |
 | `tests/test_ui_smoke.py` | 71 | Tích hợp trên ứng dụng thật: contract, đường dẫn sự kiện, wiring dialog |
 | `tests/test_runtime_paths.py` | 39 | Đường lỗi: config hỏng/thiếu, clipboard khoá, registry, thiếu icon, hotkey bị chiếm |
-| `tests/test_ui_features.py` | 33 | Undo copy-on-write + ngân sách bộ nhớ, fit-to-window, debounce resize, 4 định dạng xuất, lịch sử ảnh, ghim ảnh, đổi theme + tương phản WCAG |
+| `tests/test_ui_features.py` | 41 | Undo copy-on-write + ngân sách bộ nhớ, fit-to-window, debounce resize, 4 định dạng xuất, lịch sử ảnh, ghim ảnh, đổi theme trực tiếp trong editor + tương phản WCAG |
 | `tests/test_updates.py` | 18 | So sánh phiên bản, lý do lỗi (404 / mất mạng / rate limit), callback nền |
 | `tests/test_tray_regressions.py` | 18 | Chống tái phát 3 lỗi v1.2.0: menu khay crash, "Giới thiệu" không mở, báo sai lỗi mạng |
 | `tests/test_multi_monitor.py` | 11 | Toạ độ đa màn hình (gốc âm), snapping cửa sổ, DPI awareness |

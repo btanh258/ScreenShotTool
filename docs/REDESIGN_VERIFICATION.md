@@ -4,9 +4,9 @@ Independent quality gate for the ScreenShotTool UI redesign.
 Owner: **verifier**. I do not design and I do not fix product code — I test it and
 report defects with evidence.
 
-Repo: `C:\Users\anh25\Downloads\Projects\TestUI\ScreenShotTool`
+Repo: `<repo root>`
 Baseline commit: `c3c340c` ("Update README.md")
-Python: `C:\Users\anh25\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe` (3.12.14, Tk 8.6)
+Python: `<python interpreter>` (3.12.14, Tk 8.6)
 Contract: `UI_REDESIGN_CONTRACT.md` (frozen interfaces)
 Screenshots: `_screens/after/` (56 PNG, 3 window sizes)
 
@@ -387,9 +387,9 @@ product defect:
 ## 6. How to reproduce
 
 ```powershell
-cd C:\Users\anh25\Downloads\Projects\TestUI\ScreenShotTool
+cd <repo root>
 $env:PYTHONIOENCODING='utf-8'
-$py = 'C:\Users\anh25\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe'
+$py = '<python interpreter>'
 
 & $py -m unittest discover -s tests            # 165 tests; 3 failures = B1
 & $py -m unittest tests.test_ui_parity         # 86, OK

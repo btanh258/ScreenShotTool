@@ -288,6 +288,7 @@ GLYPH = _NS(
     zoom_in="＋",
     zoom_out="－",
     fit="⤢",
+    theme="◑",
     flip_h="⇋",
     flip_v="⇅",
     rotate_ccw="↺",
