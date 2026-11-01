@@ -19,6 +19,8 @@ ScreenShotTool là công cụ chụp màn hình cho Windows, viết bằng Pytho
 |---|---|
 | ![Cửa sổ hẹp — inspector nổi thành drawer](docs/screenshots/editor-narrow.png) | ![Dialog thông tin và phím tắt](docs/screenshots/info-dialog.png) |
 | *Cửa sổ hẹp: inspector nổi thành drawer, có nút đóng* | *Dialog thông tin: phím tắt dạng nhóm* |
+| ![Dialog gán phím tắt](docs/screenshots/hotkey-dialog.png) | ![Editor khi chưa có chú thích](docs/screenshots/editor.png) |
+| *Dialog gán phím tắt: tổ hợp phím được kiểm tra trùng ngay khi bấm* | *Editor trống, sẵn sàng chú thích* |
 
 ## Tải bản EXE
 
