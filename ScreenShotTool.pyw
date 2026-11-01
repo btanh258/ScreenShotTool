@@ -85,7 +85,7 @@ except AttributeError:
     RESAMPLE = Image.LANCZOS
 
 APP_NAME = "ScreenShotTool"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Where the config lives.
