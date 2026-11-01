@@ -16,6 +16,7 @@ import random
 import sys
 import os
 import json
+import functools
 import threading
 import pystray
 from pystray import MenuItem as item
@@ -1137,9 +1138,7 @@ class ImageEditor(EditorExportMixin):
 
     def show_function_info(self):
         """Modern info / shortcut guide (see :mod:`ui_dialogs`)."""
-        return ui_dialogs.open_info_dialog(
-            self.top, self.cfg, on_open_hotkeys=self.open_hotkey_settings,
-            app_version=APP_VERSION)
+        return show_info_dialog(self.top)
 
     def open_hotkey_settings(self):
         """Editable hotkey card, wired to the same config the tray hotkey reads."""
@@ -2273,6 +2272,61 @@ def _ask_open_image(parent):
         parent=parent)
 
 
+def _update_failure_message(reason):
+    """Explain an update-check failure in terms of what actually went wrong.
+
+    The old text blamed the network for every failure, which was wrong for the
+    most common case here: GitHub answers 404 for a private repository, so the
+    user was told to check their connection while it was working fine.
+    """
+    if reason == "not-found":
+        return ("Không tìm thấy bản phát hành công khai nào.\n\n"
+                "Kho mã nguồn đang ở chế độ riêng tư, hoặc chưa có bản phát "
+                "hành nào. Ứng dụng không thể tự kiểm tra trong trường hợp này.")
+    if reason == "rate-limited":
+        return ("GitHub tạm giới hạn số lần kiểm tra.\n"
+                "Vui lòng thử lại sau vài phút.")
+    if reason == "offline":
+        return ("Không kết nối được tới GitHub.\n"
+                "Hãy kiểm tra kết nối mạng rồi thử lại.")
+    return ("Không kiểm tra được bản mới.\n"
+            "Xem chi tiết trong file log của ứng dụng.")
+
+
+def _open_in_browser(url):
+    try:
+        os.startfile(url)
+    except OSError:
+        logging.exception("Could not open %s", url)
+
+
+def show_info_dialog(parent=None, cfg=None):
+    """Open the About / shortcut guide.
+
+    Reachable from the tray, where there is no editor instance to hang it on:
+    before this the tray called ``app.show_function_info`` on the capture tool,
+    which has no such method, so the menu item silently did nothing.
+    """
+    parent = parent or root_window_for_tk()
+    cfg = cfg if cfg is not None else load_config()
+
+    def open_hotkeys():
+        return ui_dialogs.open_hotkey_dialog(parent, cfg, _save_tray_hotkey_config)
+
+    return ui_dialogs.open_info_dialog(
+        parent, cfg, on_open_hotkeys=open_hotkeys, app_version=APP_VERSION)
+
+
+def _save_tray_hotkey_config(cfg):
+    """Persist hotkey edits made from the tray.
+
+    The listener polls load_config() every 100 ms and re-registers when the
+    combination changes, so writing the file is all that is needed here.
+    """
+    save_config(cfg)
+    logging.info("Capture hotkey set to %s", cfg.get("capture_hotkey"))
+
+
 def _pin_image(root, image):
     """Show an always-on-top copy of the image for side-by-side reference."""
     try:
@@ -2326,12 +2380,20 @@ def _recent_menu_items(history, root, limit=8):
     items = []
     for path in paths:
         label = os.path.basename(path)
+        # functools.partial, not a third default argument: pystray inspects
+        # co_argcount, and a default parameter still counts, so a 3-argument
+        # lambda raised ValueError and took the whole tray menu down with it.
         items.append(pystray.MenuItem(
-            label, lambda icon, menu_item, p=path: root.after(0, open_image_file, p)))
+            label, functools.partial(_open_history_entry, root, path)))
     items.append(pystray.Menu.SEPARATOR)
     items.append(pystray.MenuItem('Xoá lịch sử ảnh',
                                   lambda icon, menu_item: root.after(0, _clear_history, history)))
     return items
+
+
+def _open_history_entry(root, path, icon=None, menu_item=None):
+    """Menu action for one history entry (pystray passes icon and item)."""
+    root.after(0, open_image_file, path)
 
 
 def _clear_history(history):
@@ -2500,22 +2562,22 @@ def main():
 
     def check_for_updates(icon, menu_item):
         """Ask GitHub for the latest release without blocking the tray."""
-        def report(release, current):
+        def report(release, current, reason="ok"):
             def show():
                 if release is None:
                     messagebox.showinfo(
-                        "Kiểm tra cập nhật",
-                        "Không kiểm tra được bản mới.\n"
-                        "Hãy kiểm tra kết nối mạng rồi thử lại.",
+                        "Kiểm tra cập nhật", _update_failure_message(reason),
                         parent=root)
                     return
                 tag = release.get("tag") or "(không rõ)"
                 if ui_updates.is_newer(tag, current):
-                    messagebox.showinfo(
+                    answer = messagebox.askyesno(
                         "Có bản mới",
                         "Bản hiện tại: %s\nBản mới nhất: %s\n\n%s\n\n"
                         "Mở trang tải về?" % (current, tag, release.get("url", "")),
                         parent=root)
+                    if answer and release.get("url"):
+                        _open_in_browser(release["url"])
                 else:
                     messagebox.showinfo(
                         "Kiểm tra cập nhật",
@@ -2550,7 +2612,7 @@ def main():
                          pystray.Menu(lambda: _recent_menu_items(history, root))),
         pystray.Menu.SEPARATOR,
         item('Kiểm tra cập nhật', check_for_updates),
-        item(f'Giới thiệu (v{APP_VERSION})', lambda icon, menu_item: root.after(0, app.show_function_info)),
+        item(f'Giới thiệu (v{APP_VERSION})', lambda icon, menu_item: root.after(0, show_info_dialog, root)),
         pystray.Menu.SEPARATOR,
         item('Thoát', on_quit)
     ))

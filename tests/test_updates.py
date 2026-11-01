@@ -109,17 +109,29 @@ class FetchTests(unittest.TestCase):
 class AsyncTests(unittest.TestCase):
     def test_callback_receives_the_result(self):
         received = []
-        with mock.patch.object(ui_updates, "fetch_latest_release",
-                               return_value={"tag": "v9.9.9", "url": "", "notes": "", "name": ""}):
+        with mock.patch.object(ui_updates, "fetch_latest_release_detailed",
+                               return_value=({"tag": "v9.9.9", "url": "",
+                                              "notes": "", "name": ""}, "ok")):
             worker = ui_updates.check_async("1.0.0", lambda rel, cur: received.append((rel, cur)))
             worker.join(timeout=5)
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0][0]["tag"], "v9.9.9")
         self.assertEqual(received[0][1], "1.0.0")
 
+    def test_a_two_argument_callback_still_works(self):
+        """check_async passes a reason as a third argument when accepted."""
+        received = []
+        with mock.patch.object(ui_updates, "fetch_latest_release_detailed",
+                               return_value=(None, "offline")):
+            worker = ui_updates.check_async(
+                "1.0.0", lambda rel, cur, reason: received.append((rel, cur, reason)))
+            worker.join(timeout=5)
+        self.assertEqual(received, [(None, "1.0.0", "offline")])
+
     def test_raising_callback_does_not_escape_the_thread(self):
         # An exception here would otherwise surface as an unhandled thread error.
-        with mock.patch.object(ui_updates, "fetch_latest_release", return_value=None):
+        with mock.patch.object(ui_updates, "fetch_latest_release_detailed",
+                               return_value=(None, "offline")):
             with self.assertLogs("ui_updates", level="ERROR") as captured:
                 worker = ui_updates.check_async("1.0.0", lambda rel, cur: 1 / 0)
                 worker.join(timeout=5)

@@ -93,6 +93,8 @@ Tính năng này cứu bạn khi lỡ tay chụp đè hoặc đóng editor trư�
 
 **Nếu phím tắt bị ứng dụng khác chiếm:** ScreenShotTool sẽ **thông báo một lần** qua khay hệ thống và ghi vào log, thay vì im lặng để phím không hoạt động. Bạn vẫn chụp được bằng menu khay, hoặc đổi phím trong **Giới thiệu → Giảm phím tắt**.
 
+**Về "Kiểm tra cập nhật":** tính năng này gọi API công khai của GitHub, nên chỉ hoạt động khi kho mã nguồn **công khai**. Với kho riêng tư, GitHub trả về 404 và ứng dụng sẽ báo đúng là "không tìm thấy bản phát hành công khai" — không phải lỗi mạng. Muốn tự kiểm tra, hãy để kho ở chế độ công khai.
+
 ### Chỉnh sửa ảnh
 
 Editor hỗ trợ các công cụ:
@@ -198,7 +200,7 @@ python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-Bộ test gồm **269 test**:
+Bộ test gồm **288 test**:
 
 | File | Số test | Nội dung |
 |---|---|---|
@@ -207,7 +209,8 @@ Bộ test gồm **269 test**:
 | `tests/test_ui_smoke.py` | 71 | Tích hợp trên ứng dụng thật: contract, đường dẫn sự kiện, wiring dialog |
 | `tests/test_runtime_paths.py` | 39 | Đường lỗi: config hỏng/thiếu, clipboard khoá, registry, thiếu icon, hotkey bị chiếm |
 | `tests/test_ui_features.py` | 33 | Undo copy-on-write + ngân sách bộ nhớ, fit-to-window, debounce resize, 4 định dạng xuất, lịch sử ảnh, ghim ảnh, đổi theme + tương phản WCAG |
-| `tests/test_updates.py` | 17 | So sánh phiên bản, xử lý lỗi mạng, callback nền |
+| `tests/test_updates.py` | 18 | So sánh phiên bản, lý do lỗi (404 / mất mạng / rate limit), callback nền |
+| `tests/test_tray_regressions.py` | 18 | Chống tái phát 3 lỗi v1.2.0: menu khay crash, "Giới thiệu" không mở, báo sai lỗi mạng |
 | `tests/test_multi_monitor.py` | 11 | Toạ độ đa màn hình (gốc âm), snapping cửa sổ, DPI awareness |
 
 Đo độ phủ:

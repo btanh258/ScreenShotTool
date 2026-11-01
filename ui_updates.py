@@ -59,6 +59,18 @@ def fetch_latest_release(timeout=TIMEOUT_SECONDS):
     moved) resolves to None: an update check must never be the reason the app
     shows an error or crashes.
     """
+    release, _reason = fetch_latest_release_detailed(timeout)
+    return release
+
+
+def fetch_latest_release_detailed(timeout=TIMEOUT_SECONDS):
+    """Like :func:`fetch_latest_release`, but also says *why* it failed.
+
+    Returns ``(release_or_None, reason)``, where reason is one of "ok",
+    "not-found", "rate-limited", "offline" or "error". The caller needs the
+    distinction to avoid telling the user to check their network when the real
+    cause is a private repository or a missing release.
+    """
     request = urllib.request.Request(
         RELEASES_API,
         headers={"User-Agent": USER_AGENT,
@@ -67,30 +79,50 @@ def fetch_latest_release(timeout=TIMEOUT_SECONDS):
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError,
-            ValueError, json.JSONDecodeError) as exc:
+    except urllib.error.HTTPError as exc:
+        # 404 is what GitHub returns for a private repository when the request
+        # carries no token, and for a repository that has no release yet.
+        if exc.code == 404:
+            log.info("Update check: no public release found (404)")
+            return None, "not-found"
+        if exc.code in (403, 429):
+            log.info("Update check rate limited (%s)", exc.code)
+            return None, "rate-limited"
         log.info("Update check failed: %s", exc)
-        return None
+        return None, "error"
+    except (urllib.error.URLError, OSError) as exc:
+        log.info("Update check failed: %s", exc)
+        return None, "offline"
+    except (ValueError, json.JSONDecodeError) as exc:
+        log.info("Update check returned unusable data: %s", exc)
+        return None, "error"
     if not isinstance(payload, dict):
-        return None
+        return None, "error"
     return {
         "tag": payload.get("tag_name") or "",
         "url": payload.get("html_url") or "",
         "notes": payload.get("body") or "",
         "name": payload.get("name") or "",
-    }
+    }, "ok"
 
 
 def check_async(current_version, callback):
     """Run the check on a worker thread and hand the result to ``callback``.
 
     ``callback`` receives (release_or_None, current_version) and is expected to
-    marshal itself back onto the UI thread.
+    marshal itself back onto the UI thread. Callbacks that also accept a
+    ``reason`` argument get the failure cause ("not-found", "offline",
+    "rate-limited", "error") as a third positional argument, so the UI can say
+    something truer than "check your network".
     """
     def run():
-        release = fetch_latest_release()
+        release, reason = fetch_latest_release_detailed()
         try:
-            callback(release, current_version)
+            try:
+                callback(release, current_version, reason)
+            except TypeError:
+                # Older single-purpose callbacks take two arguments.
+                callback(release, current_version)
         except Exception:
             log.exception("Update check callback failed")
 
