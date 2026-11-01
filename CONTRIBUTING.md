@@ -35,6 +35,7 @@ CI chạy ruff và toàn bộ test trên `windows-latest`. PR chỉ được mer
 - Comment viết bằng tiếng Anh, chuỗi hiển thị cho người dùng bằng tiếng Việt.
 - Không dùng `except:` trần — bắt đúng exception cụ thể. `ruff check` sẽ báo nếu quên.
 - Ghi file cấu hình phải nguyên tử (xem `save_config`): ghi file tạm rồi `os.replace`, không ghi đè trực tiếp.
+- Line-ending: mã nguồn dùng LF (`git` chuẩn hoá khi commit). Riêng `tests/test_ui_smoke.py` khi sửa bằng công cụ trên Windows có thể ra CRLF ở working copy — cứ để git tự chuẩn hoá, đừng commit CRLF.
 
 ## Cấu trúc
 

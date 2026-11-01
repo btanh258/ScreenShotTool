@@ -187,8 +187,6 @@ Editor dùng bố cục ba vùng: header (thao tác chính), rail dọc bên tr�
 
 Bảng màu sáng đã được kiểm tra độ tương phản WCAG AA (chữ chính ≥ 4.5:1, chữ phụ ≥ 3:1) bằng test tự động.
 
-Line-ending và encoding: mã nguồn Python dùng LF, riêng `tests/test_ui_smoke.py` khi sửa bằng công cụ trên Windows cần chú ý CRLF (git tự chuẩn hoá khi commit).
-
 ## Đóng gói EXE
 
 Lệnh build one-file/windowed bằng PyInstaller:
@@ -218,8 +216,8 @@ Có hai cách, cả hai đều **chạy toàn bộ test trước** rồi mới b
 1. **Tự động:** đẩy một tag, CI build và đính kèm exe vào Release.
 
    ```powershell
-   git tag -a v1.1.0 -m "ScreenShotTool v1.1.0"
-   git push origin v1.1.0
+   git tag -a v1.4.0 -m "ScreenShotTool v1.4.0"   # thay bằng phiên bản mới
+   git push origin v1.4.0
    ```
 
    Workflow sẽ chạy test, build, tạo Release và đính kèm `SHA256SUMS.txt` cạnh file EXE.
@@ -227,7 +225,7 @@ Có hai cách, cả hai đều **chạy toàn bộ test trước** rồi mới b
 2. **Thủ công từ máy:** build rồi tự tạo Release (test không được tự chạy ở đây — phải tự đảm bảo đã chạy `unittest` và `ruff` trước).
 
    ```powershell
-   gh release create v1.1.0 dist\ScreenShotTool.exe --title "v1.1.0" --notes-file notes.md
+   gh release create v1.4.0 dist\ScreenShotTool.exe --title "v1.4.0" --notes-file notes.md
    ```
 
 ## Kiểm thử
@@ -243,7 +241,7 @@ Bộ test gồm **329 test**:
 |---|---|---|
 | `tests/test_transform.py` | 12 | Test gốc, **không chỉnh sửa**, kiểm tra logic biến đổi |
 | `tests/test_ui_parity.py` | 86 | Hệ thống thiết kế: token, helper màu, component, hành vi widget |
-| `tests/test_ui_smoke.py` | 71 | Tích hợp trên ứng dụng thật: contract, đường dẫn sự kiện, wiring dialog |
+| `tests/test_ui_smoke.py` | 71 | Tích hợp trên ứng dụng thật: bố cục theo kích thước, đường dẫn sự kiện, wiring dialog, template hoàn tác |
 | `tests/test_runtime_paths.py` | 39 | Đường lỗi: config hỏng/thiếu, clipboard khoá, registry, thiếu icon, hotkey bị chiếm |
 | `tests/test_ui_features.py` | 61 | Undo copy-on-write + ngân sách bộ nhớ, sàn hoàn tác giữ nguyên bản gốc, fit-to-window, debounce resize, 4 định dạng xuất, lịch sử ảnh, ghim ảnh, đổi theme trực tiếp trong editor + tương phản WCAG, chấm tròn cho bút/dạ quang, bố cục toast |
 | `tests/test_updates.py` | 31 | So sánh phiên bản, lý do lỗi (404 / mất mạng / rate limit), callback nền, chọn asset, tải về (không để lại file dở), script thay thế bản cũ |
@@ -298,7 +296,7 @@ Menu khay → **Ảnh gần đây** → **Xoá lịch sử ảnh** để dọn t
 
 Ghi cấu hình là **nguyên tử**: ghi file tạm rồi đổi tên, nên mất điện giữa lúc ghi không làm hỏng file.
 
-Cấu hình cũ đặt cạnh file EXE hoặc trong thư mục làm việc vẫn được đọc khi nâng cấp, nên không mất cài đặt; lần ghi tiếp theo sẽ chuyển về `%APPDATA%`.
+**Bản portable:** nếu có file `ScreenShotTool_config.json` nằm **cạnh file EXE**, bản đó được ưu tiên và cài đặt được giữ luôn cạnh EXE — tiện mang theo USB. Không có thì dùng `%APPDATA%`. Cấu hình cũ đặt cạnh file EXE hoặc trong thư mục làm việc vẫn được đọc khi nâng cấp, nên không mất cài đặt.
 
 ## Giấy phép
 
