@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """tests/test_ui_parity.py - behavioural parity suite for the design system.
 
-Written independently against ``UI_REDESIGN_CONTRACT.md`` sections 2 and 3.
-``ui_theme.py`` and ``ui_widgets.py`` are frozen, so everything here is a hard
-assertion: a red test means the redesign broke its own design system.
+Written independently against the frozen design-system surface: the tokens and
+widget API that ``ui_theme.py`` and ``ui_widgets.py`` expose. ``ui_theme.py`` and
+``ui_widgets.py`` are frozen, so everything here is a hard assertion: a red test
+means the redesign broke its own design system.
 
 Every test tolerates a headless machine: GUI tests skip (not error) when Tk
 cannot open a display, which keeps the windows-latest CI job and any Linux
@@ -21,7 +22,7 @@ import ui_widgets as W
 
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-# --- documented token keys (UI_REDESIGN_CONTRACT.md section 2) -------------
+# --- documented token keys (ui_theme.COLORS) ------------------------------
 COLOR_KEYS = [
     "app", "chrome", "panel", "elevated", "hover", "canvas_bg",
     "border", "border_strong", "focus_ring",

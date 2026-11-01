@@ -4,7 +4,8 @@
 These load ``ui_capture.py``, ``ui_dialogs.py`` and ``ScreenShotTool.pyw``
 exactly the way the application loads them (``importlib`` with an explicit
 file path, because the app entry point is a ``.pyw``), then drive the public
-contract from ``UI_REDESIGN_CONTRACT.md`` sections 4, 5 and 6.
+surface those modules expose: the capture flow, the dialogs, and the editor
+shell's layout and wiring.
 
 Peer-owned files may be mid-edit when this suite runs, so every module load is
 tolerant: a module that fails to import makes its tests SKIP with the real
