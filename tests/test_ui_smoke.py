@@ -489,6 +489,25 @@ class EditorConstructionTests(_TkTestCase):
         self._save_patch.start()
         self.editor = app.ImageEditor(self.root, _sample_image())
         self.drain()
+        self.wait_for_initial_fit()
+
+    def wait_for_initial_fit(self, timeout=3.0):
+        """Drive Tk until the deferred first-fit has actually run.
+
+        The editor fits and centres the image from an ``after`` callback, because
+        the canvas only reports its real size once laid out. Asserting on
+        ``offset_x``/``scale`` before that callback fires reads the pre-layout
+        values and fails on a slow machine - which is exactly how this test went
+        red on CI while passing locally.
+        """
+        import time
+        deadline = time.monotonic() + timeout
+        while getattr(self.editor, "_fit_after_id", None) is not None:
+            if time.monotonic() > deadline:
+                break
+            self.drain()
+            time.sleep(0.01)
+        self.drain()
 
     def tearDown(self):
         try:

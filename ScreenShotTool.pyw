@@ -443,6 +443,12 @@ class ImageEditor(EditorExportMixin):
         self.last_mouse_y = -100
         self._tk_images = []
         self._configure_redraw_id = None
+        # Every pending "after" this editor schedules is tracked so destroy can
+        # cancel them. An uncancelled timer fires into a dead window, which Tk
+        # reports through bgerror ("application has been destroyed") and which
+        # can still touch a shared module-level registry.
+        self._fit_after_id = None
+        self._destroyed = False
 
         self.cfg = load_config()
         self.capture_hotkey_var = tk.StringVar(value=self.cfg.get("capture_hotkey", "Alt+X"))
@@ -526,7 +532,7 @@ class ImageEditor(EditorExportMixin):
         # Fit after the geometry is applied, not before: the canvas still reports
         # its pre-layout size at construction time, which would pick 100% and
         # leave a large screenshot scrolled out of view.
-        self.top.after(60, self._initial_fit_and_redraw)
+        self._schedule_fit_redraw(60)
         # Drop the pending Copy confirmation when the window goes away, so Tk
         # never fires an "after" script whose widget no longer exists.
         self.top.bind("<Destroy>", self._on_top_destroy, add="+")
@@ -563,13 +569,35 @@ class ImageEditor(EditorExportMixin):
     def _on_top_destroy(self, event=None):
         if event is not None and event.widget is not self.top:
             return
+        self._destroyed = True
         self._cancel_copy_reset()
+        self._cancel_configure_redraw()
+        self._cancel_fit_redraw()
         if self._cursor_after_id is not None:
             try:
                 self.top.after_cancel(self._cursor_after_id)
             except tk.TclError:
                 pass
             self._cursor_after_id = None
+
+    def _schedule_fit_redraw(self, delay_ms):
+        """Defer the first fit until the window has a real size."""
+        self._cancel_fit_redraw()
+        if self._destroyed:
+            return
+        try:
+            self._fit_after_id = self.top.after(delay_ms,
+                                                self._initial_fit_and_redraw)
+        except tk.TclError:
+            self._fit_after_id = None
+
+    def _cancel_fit_redraw(self):
+        if self._fit_after_id is not None:
+            try:
+                self.top.after_cancel(self._fit_after_id)
+            except tk.TclError:
+                pass
+            self._fit_after_id = None
 
     # ------------------------------------------------------------------
     # Shell construction
@@ -1440,7 +1468,7 @@ class ImageEditor(EditorExportMixin):
         self.crop_pending = False
         if reset_zoom:
             self.scale = 1.0
-        self.top.after(30, self._initial_fit_and_redraw)
+        self._schedule_fit_redraw(30)
         self.redraw_all()
         self.save_state()
         self._refresh_metrics()
@@ -1549,6 +1577,8 @@ class ImageEditor(EditorExportMixin):
     def _run_configure_redraw(self):
         self._configure_redraw_id = None
         try:
+            if self._destroyed:
+                return
             if self.canvas.winfo_exists():
                 self.redraw_all()
         except tk.TclError:
@@ -1556,6 +1586,9 @@ class ImageEditor(EditorExportMixin):
 
     def _initial_fit_and_redraw(self):
         """First paint: pick a zoom that shows the whole capture, then draw."""
+        self._fit_after_id = None
+        if self._destroyed:
+            return
         try:
             if not self.top.winfo_exists():
                 return
