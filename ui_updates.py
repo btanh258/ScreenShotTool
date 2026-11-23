@@ -202,6 +202,14 @@ def download_asset(url, destination, timeout=DOWNLOAD_TIMEOUT_SECONDS,
         _quiet_remove(partial)
         return None
 
+    if total > 0 and written != total:
+        # Mạng đứt giữa chừng: file .part thiếu bytes nhưng vẫn ghi xuống đĩa.
+        # Trước đây chỉ kiểm tra size > 0 nên file cụt vẫn được đổi tên thành
+        # exe rồi swap vào, restart lên là hỏng. README hứa "tải thất bại thì
+        # bản đang chạy vẫn nguyên" — chỉ đúng khi so đủ Content-Length.
+        log.info("Download truncated: got %d of %d bytes", written, total)
+        _quiet_remove(partial)
+        return None
     if os.path.getsize(partial) <= 0:
         log.info("Download produced an empty file")
         _quiet_remove(partial)

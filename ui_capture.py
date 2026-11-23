@@ -378,7 +378,11 @@ class SnippingTool:
         closed = cv2.morphologyEx(
             edges, cv2.MORPH_CLOSE,
             cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-        contours, _ = cv2.findContours(closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        # OpenCV 4 trả (contours, hierarchy), OpenCV 3 trả (image, contours,
+        # hierarchy): lấy theo số phần tử trả về để chạy được cả hai, thay vì
+        # unpack cứng 2 giá trị rồi raise trên OpenCV 3.
+        _found = cv2.findContours(closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours = _found[0] if len(_found) == 2 else _found[1]
         full_w, full_h = self.full_img.width, self.full_img.height
         for contour in contours:
             approx = cv2.approxPolyDP(
@@ -412,13 +416,16 @@ class SnippingTool:
             # Sleep before anything is captured. Doing it on the Tk thread would
             # freeze the tray-owned window for the whole delay, so the wait runs
             # on a worker and the grab is handed back to the main loop.
+            # Cài hook Esc ngay từ lúc bắt đầu chờ (trước đây hook chỉ được cài
+            # trong _capture_now): Esc trong lúc chờ sẽ hủy timer qua
+            # cancel_snip thay vì vẫn bị chụp khi hết giờ.
+            self._install_escape_hook()
             self.root.after(100, lambda: self._deferred_snipping(float(delay)))
             return
         self._capture_now()
 
     def _deferred_snipping(self, delay):
         """Run the grab after ``delay`` seconds without blocking the UI thread."""
-        self._pending_delay_job = getattr(self, "_pending_delay_job", None)
         try:
             import threading as _threading
             worker = _threading.Timer(delay, lambda: self.root.after(0, self._capture_now))
@@ -431,6 +438,7 @@ class SnippingTool:
 
     def _capture_now(self):
         """Take the screenshot and enter capture mode immediately."""
+        self._pending_delay_job = None
         _import_optional_dependencies()
         if mss is None:
             self.is_active = False
@@ -465,24 +473,36 @@ class SnippingTool:
                 except Exception:
                     pass
 
-        self.tk_dark = ImageTk.PhotoImage(
-            ImageEnhance.Brightness(self.full_img).enhance(self.DIM_FACTOR))
-        # Pre-render the deeper "outside" scrim once per capture so dragging
-        # does not pay for a darken + full-screen PhotoImage on every motion.
-        self._dim_photo = ImageTk.PhotoImage(
-            ImageEnhance.Brightness(self.full_img).enhance(self.OUTSIDE_FACTOR))
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self.tk_dark, tags="bg")
+        # Mọi thứ sau bước grab đều có thể lỗi (hết RAM khi tạo PhotoImage,
+        # OpenCV lỗi khi dò khối UI, ...). Trước đây đoạn này không được
+        # guard: exception thoát ra ngoài, is_active vẫn True và root đã
+        # withdraw, nên mọi lần bấm hotkey sau đó đều bị bỏ qua cho tới khi
+        # restart app. Giờ lỗi nào cũng dọn sạch trạng thái và báo rõ.
+        try:
+            self.tk_dark = ImageTk.PhotoImage(
+                ImageEnhance.Brightness(self.full_img).enhance(self.DIM_FACTOR))
+            # Pre-render the deeper "outside" scrim once per capture so dragging
+            # does not pay for a darken + full-screen PhotoImage on every motion.
+            self._dim_photo = ImageTk.PhotoImage(
+                ImageEnhance.Brightness(self.full_img).enhance(self.OUTSIDE_FACTOR))
+            self.canvas.delete("all")
+            self.canvas.create_image(0, 0, anchor="nw", image=self.tk_dark, tags="bg")
 
-        self._prepare_smart_rects()
+            self._prepare_smart_rects()
 
-        self.snip_state = 0
-        self.is_dragging = False
-        self.current_auto_rect = None
-        self.clicked_auto_rect = None
-        self._selection_rect = None
-        self._mag_key = None
-        self._draw_hint()
+            self.snip_state = 0
+            self.is_dragging = False
+            self.current_auto_rect = None
+            self.clicked_auto_rect = None
+            self._selection_rect = None
+            self._mag_key = None
+            self._draw_hint()
+        except Exception as exc:
+            log.exception("Could not prepare the capture overlay")
+            self.cancel_snip()
+            messagebox.showerror("Không thể chuẩn bị màn hình chụp", str(exc),
+                                 parent=self.root)
+            return
 
         try:
             self.root.deiconify()
@@ -531,6 +551,15 @@ class SnippingTool:
             pass
 
     def cancel_snip(self, event=None):
+        # Hủy cả timer chụp hẹn giờ đang chờ (nếu có): trước đây timer không
+        # được hủy nên bấm Esc / hotkey trong lúc chờ vẫn bị chụp khi hết giờ.
+        pending = getattr(self, "_pending_delay_job", None)
+        if pending is not None:
+            try:
+                pending.cancel()
+            except Exception:
+                pass
+            self._pending_delay_job = None
         self.is_active = False
         self.snip_state = 0
         self.is_dragging = False

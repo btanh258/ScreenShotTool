@@ -30,8 +30,13 @@ def _validate(value, require_modifier=True):
         return None
     if len(parts) > 1 and len(parts[:-1]) != len(set(parts[:-1])):
         return None
-    if len(parts[-1]) != 1 and not parts[-1].startswith('F') and parts[-1] not in {'DELETE', 'ESC', 'SPACE', 'ENTER'}:
+    if any(part not in modifiers for part in parts[:-1]):
         return None
+    key = parts[-1]
+    if len(key) != 1 and key not in {'DELETE', 'ESC', 'SPACE', 'ENTER'}:
+        # Chỉ F1–F12 là phím F thật: "F13", "F99", "FABC" trước đây lọt qua.
+        if not (key.startswith('F') and key[1:].isdigit() and 1 <= int(key[1:]) <= 12):
+            return None
     return '+'.join(parts)
 
 

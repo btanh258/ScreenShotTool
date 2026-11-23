@@ -7,6 +7,28 @@ phiên bản theo [Semantic Versioning](https://semver.org/lang/vi/).
 
 _(chưa có thay đổi)_
 
+## [1.4.1] — 2026-11-24
+
+### Thay đổi
+
+- **Tone nâu theo màu icon thay cho tone xanh.** Accent tối `#E09A5F` (nền icon) / sáng `#8A5A2B` (nâu đậm trong icon), chữ trên nút accent tối đổi sang nâu đậm `#241708` để vẫn đạt tương phản 7.5:1; khung chọn/crop/marquee trên canvas và icon khay dự phòng cũng đổi theo. Bảng màu vẽ của bút không đổi.
+
+### Sửa lỗi
+
+- **Bấm Ctrl+Z hoàn tác 2 bước (Ctrl+Y làm lại 2 bước).** Undo/redo vừa bind trên toplevel qua `_refresh_editor_hotkeys()` vừa bind_all, mà bindtag chạy toplevel trước rồi mới tới all nên mỗi lần bấm chạy 2 lần. Đã bỏ 2 dòng bind_all thừa.
+- **Gán undo/redo/delete bằng phím F hoặc Ctrl+Delete làm editor không mở được nữa.** `_tk_sequence` lower-case toàn bộ keysym nên `<Control-f5>`, `<Control-delete>`, ... raise `TclError` trong constructor mà không được guard. Giờ map đúng keysym (`F1`–`F12`, `Delete`, `Escape`, `Return`, `Tab`, ...) và `_refresh_editor_hotkeys()` bỏ qua phím không bind được kèm cảnh báo trong log thay vì crash.
+- **Lỗi sau bước grab treo chế độ chụp tới khi restart app.** Phần sau `mss.grab` (tạo PhotoImage, dò khối UI bằng OpenCV) không được guard nên exception để lại `is_active=True` với root đã withdraw. Giờ toàn bộ đoạn đó nằm trong try/except, lỗi thì dọn trạng thái và báo rõ. `cv2.findContours` cũng đọc được cả OpenCV 3 (trả 3 giá trị) lẫn OpenCV 4 (trả 2).
+- **Chụp hẹn giờ (3/5/10 giây) không hủy được.** Timer không được hủy trong `cancel_snip`, hook Esc chỉ cài sau khi grab xong. Giờ Esc được cài ngay khi bắt đầu chờ và `cancel_snip` hủy timer đang chờ.
+- **Một giá trị config lỗi làm mất toàn bộ setting.** `int(width)` lỗi thì cả màu/phím/theme rơi về default; màu `"#zzzzzz"` cũng lọt qua kiểm tra `startswith("#")` rồi gây lỗi ở chỗ khác. Giờ mỗi field validate riêng với fallback riêng, màu phải đúng dạng `#RGB` / `#RRGGBB`.
+- **Tự cập nhật không kiểm tra file tải về có đủ không.** `download_asset` chỉ kiểm tra size > 0 nên file tải cụt vẫn được swap vào thay exe. Giờ đối chiếu với `Content-Length`, thiếu byte thì hủy và giữ nguyên bản đang chạy.
+- **Xóa trắng ô nhập khi sửa chữ cũ không xóa được chữ.** `commit_text` chỉ xóa shape khi tạo mới; giờ xóa trắng thì xóa luôn shape đang sửa (có lưu lịch sử để hoàn tác).
+- **Đổi theme giữa lúc đang gõ text làm mất chữ đã gõ.** `_rebuild_for_theme` phá cây widget mà không commit text đang sửa; giờ commit trước khi rebuild.
+- **Dialog chấp nhận phím mà bộ đăng ký không hiểu.** `_validate` và `validate_hotkey` chấp nhận `F13`–`F99`, `FABC` và lặng lẽ bỏ token modifier lạ (`CTRL+META+X` thành `CTRL+X`) rồi rơi về Alt+X. Giờ chỉ nhận F1–F12 và từ chối token lạ. Thông báo "phím bị chiếm" cũng hiện đúng tên phím Delete/Esc/Space/Enter thay vì chỉ hiện modifier.
+
+### Kiểm thử
+
+- Thêm test cho: map keysym của `_tk_sequence`, `_validate` từ chối F13/F99 và modifier lạ, `load_config` giữ lại các setting đúng khi một field lỗi, `download_asset` từ chối file tải cụt.
+
 ## [1.4.0] — 2026-11-01
 
 ### Sửa lỗi
@@ -107,7 +129,8 @@ _(chưa có thay đổi)_
 - Bản phát hành đầu tiên: chụp màn hình bằng `Alt+X`, nhận diện cửa sổ/vùng UI, sao
   chép clipboard, editor có annotation, tray icon, khởi động cùng Windows.
 
-[Chưa phát hành]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.0...HEAD
+[Chưa phát hành]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/btanh258/ScreenShotTool/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/btanh258/ScreenShotTool/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/btanh258/ScreenShotTool/compare/v1.2.0...v1.2.1

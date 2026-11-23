@@ -43,6 +43,26 @@ class TransformTests(unittest.TestCase):
             module.CONFIG_FILE, module.LEGACY_CONFIG_FILE = old_primary, old_legacy
             Path(path).unlink(missing_ok=True)
 
+    def test_bad_field_falls_back_without_resetting_the_rest(self):
+        # Một field lỗi (màu sai dạng, width không phải số) chỉ reset field
+        # đó: theme và phím chụp đúng trong cùng file phải được giữ lại.
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as handle:
+            json.dump({"color": "#zzzzzz", "width": "abc", "theme": "dark",
+                       "capture_hotkey": "Alt+X"}, handle)
+            path = handle.name
+        old_primary, old_legacy = module.CONFIG_FILE, module.LEGACY_CONFIG_FILE
+        try:
+            module.CONFIG_FILE = path
+            module.LEGACY_CONFIG_FILE = path + ".missing"
+            config = module.load_config()
+            self.assertEqual(config["color"], "#ff0000")
+            self.assertEqual(config["width"], 4)
+            self.assertEqual(config["theme"], "dark")
+            self.assertEqual(config["capture_hotkey"], "ALT+X")
+        finally:
+            module.CONFIG_FILE, module.LEGACY_CONFIG_FILE = old_primary, old_legacy
+            Path(path).unlink(missing_ok=True)
+
     def test_rotate_swaps_dimensions_and_preserves_alpha(self):
         editor = self.editor()
         editor.transform_document("rotate_cw")
@@ -115,6 +135,32 @@ class TransformTests(unittest.TestCase):
         self.assertEqual(module.parse_hotkey("Ctrl+Shift+S"), (6, 83))
         self.assertIsNone(module.validate_hotkey("Alt"))
         self.assertIsNone(module.validate_hotkey("Ctrl+Ctrl+S"))
+
+    def test_hotkey_parser_rejects_invalid_function_keys(self):
+        self.assertIsNone(module.validate_hotkey("Ctrl+F13"))
+        self.assertIsNone(module.validate_hotkey("Ctrl+F99"))
+        self.assertIsNone(module.validate_hotkey("Ctrl+FABC"))
+        self.assertIsNone(module.validate_hotkey("Ctrl+META+X"))
+        self.assertEqual(module.parse_hotkey("Ctrl+F12"), (2, 0x7B))
+
+    def test_hotkey_settings_rejects_invalid_function_keys(self):
+        self.assertIsNone(_validate('Ctrl+F13'))
+        self.assertIsNone(_validate('Ctrl+F99'))
+        self.assertIsNone(_validate('Ctrl+FABC'))
+        self.assertIsNone(_validate('Ctrl+META+X'))
+        self.assertEqual(_validate('Ctrl+F12'), 'CTRL+F12')
+
+    def test_tk_sequence_maps_special_keysyms(self):
+        editor = self.editor()
+        self.assertEqual(editor._tk_sequence("Ctrl+Z"), "<Control-z>")
+        self.assertEqual(editor._tk_sequence("Ctrl+F5"), "<Control-F5>")
+        self.assertEqual(editor._tk_sequence("Ctrl+Delete"), "<Control-Delete>")
+        self.assertEqual(editor._tk_sequence("Ctrl+Escape"), "<Control-Escape>")
+        self.assertEqual(editor._tk_sequence("Ctrl+Enter"), "<Control-Return>")
+        self.assertEqual(editor._tk_sequence("Ctrl+Tab"), "<Control-Tab>")
+        self.assertEqual(editor._tk_sequence("Delete"), "<Delete>")
+        self.assertIsNone(editor._tk_sequence("Win+Z"))
+        self.assertIsNone(editor._tk_sequence("Ctrl+Win+Z"))
 
     def test_oval_renders_to_rgba_image(self):
         editor = self.editor()

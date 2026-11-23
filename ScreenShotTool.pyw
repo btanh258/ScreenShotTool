@@ -86,7 +86,7 @@ except AttributeError:
     RESAMPLE = Image.LANCZOS
 
 APP_NAME = "ScreenShotTool"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Where the config lives.
@@ -132,9 +132,16 @@ def validate_hotkey(value):
     if len(parts) < 2 or parts[-1] in HOTKEY_MODIFIERS:
         return None
     key = parts[-1]
-    if len(key) != 1 and not key.startswith("F") and key not in {"DELETE", "ESC", "SPACE", "ENTER"}:
+    if len(key) != 1 and key not in {"DELETE", "ESC", "SPACE", "ENTER"}:
+        # Chỉ F1–F12 là phím F thật: "F13", "F99", "FABC" trước đây lọt qua
+        # đây rồi bị parse_hotkey trả None, app lặng lẽ rơi về Alt+X.
+        if not (key.startswith("F") and key[1:].isdigit() and 1 <= int(key[1:]) <= 12):
+            return None
+    # Token modifier lạ (META, ...) trước đây bị lặng lẽ bỏ, "CTRL+META+X"
+    # thành "CTRL+X": từ chối hẳn thay vì đăng ký sai phím người dùng gõ.
+    if any(part not in HOTKEY_MODIFIERS for part in parts[:-1]):
         return None
-    modifiers = [part for part in parts[:-1] if part in HOTKEY_MODIFIERS]
+    modifiers = parts[:-1]
     if not modifiers or len(set(modifiers)) != len(modifiers):
         return None
     return "+".join([*modifiers, key])
@@ -178,6 +185,17 @@ def toggle_startup(icon, item):
     except Exception:
         pass
 
+def _is_hex_color(value):
+    """True for "#RGB" / "#RRGGBB" only: "#zzzzzz" hay "#12345" trước đây
+    lọt qua kiểm tra startswith("#") rồi làm winfo_rgb / ImageDraw raise
+    ở chỗ khác, rất khó truy ra nguyên nhân."""
+    if not isinstance(value, str) or not value.startswith("#"):
+        return False
+    digits = value[1:]
+    return len(digits) in (3, 6) and all(
+        c in "0123456789abcdefABCDEF" for c in digits)
+
+
 def load_config():
     defaults = {
         "color": "#ff0000", "width": 4,
@@ -202,10 +220,19 @@ def load_config():
             # by the defaults - which looks like the app forgot the config.
             with open(path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("config is not a JSON object")
+            # Mỗi field validate riêng với fallback riêng: trước đây
+            # int(width) lỗi ("abc") làm cả config (màu, phím, theme) rơi
+            # về default, dù comment dưới khẳng định typo theme không được
+            # reset các setting khác.
             color = data.get("color", defaults["color"])
-            width = int(data.get("width", defaults["width"]))
-            if not isinstance(color, str) or not color.startswith("#"):
+            if not _is_hex_color(color):
                 color = defaults["color"]
+            try:
+                width = int(data.get("width", defaults["width"]))
+            except (ValueError, TypeError):
+                width = defaults["width"]
             editor_hotkeys = data.get("editor_hotkeys", defaults["editor_hotkeys"])
             if not isinstance(editor_hotkeys, dict):
                 editor_hotkeys = defaults["editor_hotkeys"].copy()
@@ -491,8 +518,10 @@ class ImageEditor(EditorExportMixin):
         self.top.bind("<Delete>", self.delete_selected)
         self.top.bind("<MouseWheel>", self.on_mouse_wheel)
         self.top.bind("<Control-MouseWheel>", self.on_mouse_wheel)
-        self.top.bind_all("<Control-z>", lambda e: (self.undo(), "break")[1])
-        self.top.bind_all("<Control-y>", lambda e: (self.redo(), "break")[1])
+        # Lưu ý: KHÔNG bind_all Ctrl+Z / Ctrl+Y ở đây. _refresh_editor_hotkeys()
+        # đã bind undo/redo (mặc định Ctrl+Z / Ctrl+Y) trên toplevel; bindtag
+        # chạy theo thứ tự widget → class → toplevel → all, nên bind_all thêm
+        # một lần nữa sẽ làm mỗi lần bấm hoàn tác/làm lại 2 bước.
         self.top.bind_all("<Control-c>", lambda e: (self.save_clipboard(), "break")[1])
         self.top.bind_all("<Control-s>", lambda e: (self.save_file(), "break")[1])
         self.top.bind_all("<Control-a>", lambda e: (self.handle_select_all_shortcut(), "break")[1])
@@ -625,6 +654,10 @@ class ImageEditor(EditorExportMixin):
         bindings are re-installed afterwards because they lived on a widget
         that no longer exists.
         """
+        # Commit chữ đang gõ trước khi phá cây widget: trước đây text_entry
+        # bị destroy cùng cây widget mà editing_tag không reset, chữ đã gõ mất.
+        if self.text_entry:
+            self.commit_text(save_history=False)
         for child in self.top.winfo_children():
             child.destroy()
         # Widget references stored on self point at the destroyed tree. Clearing
@@ -1189,9 +1222,32 @@ class ImageEditor(EditorExportMixin):
         parts = [part.strip().lower() for part in shortcut.replace('-', '+').split('+') if part.strip()]
         if len(parts) < 2:
             return None
+        # Tk keysym phân biệt chữ hoa/thường: F5 phải là "F5", Delete là
+        # "Delete", Escape là "Escape", Return là "Return", Tab là "Tab".
+        # Bản cũ lower-case toàn bộ nên "<Control-f5>", "<Control-delete>",
+        # "<Control-escape>", ... đều raise TclError khi bind, làm editor
+        # không mở được nữa cho tới khi sửa tay file config.
+        key_map = {
+            'delete': 'Delete', 'del': 'Delete',
+            'escape': 'Escape', 'esc': 'Escape',
+            'return': 'Return', 'enter': 'Return',
+            'tab': 'Tab', 'space': 'space',
+            'backspace': 'BackSpace', 'back': 'BackSpace',
+            'insert': 'Insert', 'home': 'Home', 'end': 'End',
+            'pageup': 'Prior', 'pagedown': 'Next',
+            'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
+        }
         key = parts[-1]
+        if key.startswith('f') and key[1:].isdigit() and 1 <= int(key[1:]) <= 12:
+            key = 'F' + key[1:]
+        else:
+            key = key_map.get(key, key)
         mods = {'ctrl': 'Control', 'control': 'Control', 'alt': 'Alt', 'shift': 'Shift'}
-        modifier_text = '-'.join(mods[p] for p in parts[:-1] if p in mods)
+        # Modifier lạ (Win/Meta/...) không có tương đương chắc chắn trong Tk
+        # trên Windows: từ chối bind thay vì lặng lẽ bind sai phím.
+        if any(p not in mods for p in parts[:-1]):
+            return None
+        modifier_text = '-'.join(mods[p] for p in parts[:-1])
         if not modifier_text:
             return None
         return f"<{modifier_text}-{key}>"
@@ -1203,9 +1259,17 @@ class ImageEditor(EditorExportMixin):
         hotkeys = self.cfg.get('editor_hotkeys', {})
         for shortcut, callback in ((hotkeys.get('undo'), self.undo), (hotkeys.get('redo'), self.redo), (hotkeys.get('delete'), self.delete_selected)):
             sequence = self._tk_sequence(shortcut)
-            if sequence:
+            if not sequence:
+                logging.warning("Bỏ qua phím editor không bind được: %r", shortcut)
+                continue
+            try:
                 self.top.bind(sequence, callback)
-                self._custom_hotkey_sequences.append(sequence)
+            except tk.TclError:
+                # Phím lưu trong config nhưng Tk không hiểu: bỏ qua thay vì
+                # làm cả editor không mở được (đã từng xảy ra với F5/Delete).
+                logging.warning("Không bind được phím editor %r (%s)", shortcut, sequence)
+                continue
+            self._custom_hotkey_sequences.append(sequence)
 
     def _on_text_bg_change(self):
         self.update_custom_cursor()
@@ -1669,7 +1733,7 @@ class ImageEditor(EditorExportMixin):
             elif t == 'arrow':
                 self.canvas.create_line(c[0], c[1], c[2], c[3], fill=col, width=w_shape, arrow=tk.LAST, arrowshape=(w_shape*3, w_shape*3+2, w_shape), tags=(tag,))
             elif t == 'crop' and self.crop_pending:
-                self.canvas.create_rectangle(c[0], c[1], c[2], c[3], outline='#0078d4', dash=(6, 4), width=2, tags=(tag,))
+                self.canvas.create_rectangle(c[0], c[1], c[2], c[3], outline=T.COLORS.accent, dash=(6, 4), width=2, tags=(tag,))
             elif t == 'text':
                 font_tk = ("Segoe UI", max(1, int(w_shape*4)))
                 fg_col, bg_col = self._text_colors(col, s.get('bg_enabled', False))
@@ -1840,7 +1904,7 @@ class ImageEditor(EditorExportMixin):
 
         if tool == "select" and self.selection_marquee:
             self.canvas.delete('selection_marquee')
-            self.canvas.create_rectangle(self.start_cx, self.start_cy, cx, cy, outline='#0078d4', dash=(5, 3), tags='selection_marquee')
+            self.canvas.create_rectangle(self.start_cx, self.start_cy, cx, cy, outline=T.COLORS.accent, dash=(5, 3), tags='selection_marquee')
             return
 
         if tool == "select" and self.selected_tags:
@@ -1884,7 +1948,7 @@ class ImageEditor(EditorExportMixin):
             elif tool == 'blur':
                 self.canvas.create_rectangle(c[0], c[1], c[2], c[3], outline="gray", dash=(4,4), tags=("temp_drag",))
             elif tool == 'crop':
-                self.canvas.create_rectangle(c[0], c[1], c[2], c[3], outline="#0088ff", dash=(4,4), width=2, tags=("temp_drag",))
+                self.canvas.create_rectangle(c[0], c[1], c[2], c[3], outline=T.COLORS.accent, dash=(4,4), width=2, tags=("temp_drag",))
             elif tool == 'erase':
                 self.canvas.create_rectangle(c[0], c[1], c[2], c[3], outline="red", dash=(4,4), width=2, tags=("temp_drag",))
 
@@ -2098,8 +2162,12 @@ class ImageEditor(EditorExportMixin):
             target['text'] = txt
             if save_history:
                 self.save_state()
-        elif target and not editing_existing:
+        elif target:
+            # Xóa trắng ô nhập thì xóa luôn shape (trước đây chỉ xóa khi tạo
+            # mới; sửa chữ cũ thành rỗng thì chữ cũ vẫn nằm đó, im lặng).
             self.shapes.remove(target)
+            if editing_existing and save_history:
+                self.save_state()
         self.text_entry.destroy()
         self.text_entry = None
         self.editing_tag = None
@@ -2404,8 +2472,8 @@ def create_tray_icon():
         icon_path = resource_path("icon_ScreenShotTool.ico")
         return Image.open(icon_path)
     except (OSError, ValueError):
-        # Dự phòng: Nếu mất file ảnh thì tự vẽ lại ô màu xanh
-        return Image.new('RGB', (64, 64), color="#0078D4")
+        # Dự phòng: Nếu mất file ảnh thì tự vẽ lại ô màu nâu (theo icon)
+        return Image.new('RGB', (64, 64), color="#9C6B43")
 
 def open_editor_for(image):
     """Callback handed to :class:`ui_capture.ResultToast`.
@@ -2675,6 +2743,9 @@ def _hotkey_label(modifier_mask, vk):
         names.append(chr(vk))
     elif 0x70 <= vk <= 0x87:
         names.append("F%d" % (vk - 0x6F))
+    else:
+        names.append({0x2E: "Delete", 0x1B: "Esc", 0x20: "Space",
+                      0x0D: "Enter"}.get(vk, "phím không rõ"))
     return "+".join(names)
 
 

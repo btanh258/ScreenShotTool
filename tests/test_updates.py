@@ -208,6 +208,24 @@ class UpdateInstallTests(unittest.TestCase):
         # The temporary sibling must not survive a successful download.
         self.assertFalse(Path(str(target) + ".part").exists())
 
+    def test_truncated_download_is_rejected(self):
+        # Server báo 1000 bytes nhưng chỉ gửi 100: file cụt phải bị hủy,
+        # không được đổi tên thành exe để swap vào.
+        import tempfile
+        body = b"x" * 100
+        response = mock.MagicMock()
+        response.headers.get.return_value = "1000"
+        response.read.side_effect = [body, b""]
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=False)
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "out.exe"
+            with mock.patch("urllib.request.urlopen", return_value=response):
+                result = ui_updates.download_asset("https://example/app.exe", target)
+            self.assertIsNone(result)
+            self.assertFalse(target.exists())
+            self.assertFalse(Path(str(target) + ".part").exists())
+
     def test_download_accepts_a_path_object(self):
         import tempfile
         source = Path(tempfile.mkdtemp()) / "payload.bin"

@@ -120,19 +120,22 @@ COLORS = _NS(
     # lines
     border="#2A3040",
     border_strong="#3A4356",
-    focus_ring="#3B82F6",
+    focus_ring="#E09A5F",
 
     # text ramp
     text_primary="#F3F6FC",
     text_secondary="#A9B4C7",
     text_muted="#6C7789",
-    text_on_accent="#FFFFFF",
+    # Chữ trên nền accent nâu (#E09A5F) phải là nâu đậm, không phải trắng:
+    # trắng trên #E09A5F chỉ đạt 2.3:1, nâu đậm #241708 đạt 7.5:1. Các nút
+    # danger/success tối cũng vẫn đạt chuẩn với chữ này (4.7:1 / 6.9:1).
+    text_on_accent="#241708",
 
-    # accent + semantics
-    accent="#3B82F6",
-    accent_hover="#5B9BFF",
-    accent_pressed="#2563EB",
-    accent_soft="#1B2C4D",
+    # accent + semantics — tone nâu lấy từ icon (#E09A5F nền, #9C6B43 đậm)
+    accent="#E09A5F",
+    accent_hover="#ECB47E",
+    accent_pressed="#C98A4B",
+    accent_soft="#33261A",
     success="#10B981",
     success_hover="#34D399",
     success_pressed="#059669",
@@ -140,13 +143,13 @@ COLORS = _NS(
     danger_hover="#F87171",
     danger_pressed="#DC2626",
     warning="#F59E0B",
-    info="#60A5FA",
+    info="#D9A05B",
 
     # overlay
     scrim="#000000",
     hint_bg="#14171F",
     hint_text="#E7ECF5",
-    selection="#3B82F6",
+    selection="#E09A5F",
     selection_alt="#F59E0B",
 )
 
@@ -169,7 +172,7 @@ COLORS_LIGHT = _NS(
     # lines
     border="#D5DBE6",
     border_strong="#B9C2D0",
-    focus_ring="#2563EB",
+    focus_ring="#8A5A2B",
 
     # text ramp
     text_primary="#131722",
@@ -180,11 +183,12 @@ COLORS_LIGHT = _NS(
     text_muted="#393F4B",
     text_on_accent="#FFFFFF",
 
-    # accent + semantics
-    accent="#2563EB",
-    accent_hover="#1D4ED8",
-    accent_pressed="#1E40AF",
-    accent_soft="#DCE7FB",
+    # accent + semantics — tone nâu lấy từ icon; nâu đậm #8A5A2B để chữ
+    # trắng trên nút vẫn đạt 5.9:1 trên nền sáng.
+    accent="#8A5A2B",
+    accent_hover="#7A4E24",
+    accent_pressed="#6B4420",
+    accent_soft="#F3E2CC",
     # Darker than the dark palette's greens/reds: a mid-tone that reads well on
     # a dark surface disappears on white. Measured 3.0:1 and 3.4:1 on panel.
     success="#065F46",
@@ -194,13 +198,13 @@ COLORS_LIGHT = _NS(
     danger_hover="#B91C1C",
     danger_pressed="#991B1B",
     warning="#78350F",
-    info="#1E40AF",
+    info="#5E3A1C",
 
     # overlay
     scrim="#000000",
     hint_bg="#FFFFFF",
     hint_text="#131722",
-    selection="#2563EB",
+    selection="#8A5A2B",
     selection_alt="#D97706",
 )
 
@@ -344,10 +348,16 @@ def darken(color: str, amount: float = 0.12) -> str:
 
 
 def readable_on(color: str) -> str:
-    """Return a high-contrast text colour for the given background."""
+    """Return a high-contrast text colour for the given background.
+
+    Deliberately independent of COLORS.text_on_accent: in the dark theme
+    that token is dark brown (#241708, for text on the tan accent buttons),
+    so it would be unreadable on a dark background. The two extremes below
+    are the palette's own primary text colours, light and dark.
+    """
     r, g, b = _to_rgb(color)
     luminance = (r * 0.299 + g * 0.587 + b * 0.114) / 255.0
-    return COLORS.app if luminance > 0.6 else COLORS.text_on_accent
+    return "#131722" if luminance > 0.6 else "#F3F6FC"
 
 
 # --------------------------------------------------------------------------
