@@ -295,5 +295,133 @@ class UpdateInstallTests(unittest.TestCase):
         self.assertFalse(ui_updates.can_self_update())
 
 
+class OnedirUpdateTests(unittest.TestCase):
+    def _release(self):
+        return {"tag": "v1.4.2", "assets": [
+            {"name": "ScreenShotTool.exe",
+             "url": "https://example/ScreenShotTool.exe", "size": 1},
+            {"name": "ScreenShotTool-1.4.2.zip",
+             "url": "https://example/ScreenShotTool-1.4.2.zip", "size": 2},
+        ]}
+
+    def test_onefile_is_detected_by_the_missing_internal_folder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            exe = str(Path(folder) / "ScreenShotTool.exe")
+            with mock.patch.object(sys, "frozen", True, create=True), \
+                    mock.patch.object(sys, "executable", exe):
+                self.assertTrue(ui_updates.is_onefile_build())
+                (Path(folder) / "_internal").mkdir()
+                self.assertFalse(ui_updates.is_onefile_build())
+        self.assertFalse(ui_updates.is_onefile_build())
+
+    def test_asset_choice_follows_the_build_type(self):
+        release = self._release()
+        with mock.patch.object(ui_updates, "is_onefile_build",
+                               return_value=True):
+            self.assertEqual(ui_updates.pick_update_asset(release),
+                             "https://example/ScreenShotTool.exe")
+        with mock.patch.object(ui_updates, "is_onefile_build",
+                               return_value=False):
+            self.assertEqual(ui_updates.pick_update_asset(release),
+                             "https://example/ScreenShotTool-1.4.2.zip")
+        self.assertEqual(ui_updates.pick_update_zip(release),
+                         "https://example/ScreenShotTool-1.4.2.zip")
+        self.assertIsNone(ui_updates.pick_update_zip({"assets": []}))
+
+    def test_onefile_falls_back_to_the_zip_when_there_is_no_exe(self):
+        release = {"tag": "v9.9.9", "assets": [
+            {"name": "ScreenShotTool-9.9.9.zip",
+             "url": "https://example/app.zip", "size": 2}]}
+        with mock.patch.object(ui_updates, "is_onefile_build",
+                               return_value=True):
+            self.assertEqual(ui_updates.pick_update_asset(release),
+                             "https://example/app.zip")
+
+    def _make_zip(self, folder):
+        import zipfile
+        source = Path(folder) / "app.zip"
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("ScreenShotTool/ScreenShotTool.exe", b"EXE")
+        return source
+
+    def test_dir_update_stages_the_zip_and_swaps_the_folder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            local_appdata = Path(folder) / "Local"
+            local_appdata.mkdir()
+            current_exe = Path(folder) / "Downloads" / "ScreenShotTool.exe"
+            current_exe.parent.mkdir()
+            current_exe.write_bytes(b"OLD")
+            zip_path = self._make_zip(folder)
+            with mock.patch.object(sys, "frozen", True, create=True), \
+                    mock.patch.object(ui_updates, "is_onefile_build",
+                                      return_value=True), \
+                    mock.patch.dict("os.environ",
+                                    {"LOCALAPPDATA": str(local_appdata)}), \
+                    mock.patch("subprocess.Popen") as popen:
+                helper = ui_updates.apply_update(zip_path, current_exe,
+                                                 relaunch=False)
+            self.assertIsNotNone(helper)
+            popen.assert_called_once()
+            script = Path(helper).read_text(encoding="utf-8")
+            target = str(local_appdata / "ScreenShotTool")
+            self.assertIn(target, script)
+            self.assertIn('move /y "%TARGET%" "%TARGET%.old"', script)
+            self.assertIn("rem no relaunch", script)
+            staged = Path(tempfile.gettempdir()) / "ScreenShotTool-update" \
+                / "ScreenShotTool" / "ScreenShotTool.exe"
+            self.assertTrue(staged.is_file())
+
+    def test_dir_helper_script_renames_swaps_and_relaunches(self):
+        template = ui_updates._UPDATE_DIR_SCRIPT
+        self.assertIn('move /y "%TARGET%" "%TARGET%.old"', template)
+        self.assertIn('start "" "%TARGET%\\%EXE%"', template)
+        self.assertIn('del "%~f0"', template)
+        # An unbounded retry would spin forever if a virus scanner held the folder.
+        self.assertIn("GEQ", template)
+
+    def test_dir_update_on_an_onedir_build_replaces_its_own_folder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            app_dir = Path(folder) / "ScreenShotTool"
+            app_dir.mkdir()
+            current_exe = app_dir / "ScreenShotTool.exe"
+            current_exe.write_bytes(b"OLD")
+            zip_path = self._make_zip(folder)
+            with mock.patch.object(sys, "frozen", True, create=True), \
+                    mock.patch.object(ui_updates, "is_onefile_build",
+                                      return_value=False), \
+                    mock.patch("subprocess.Popen"):
+                helper = ui_updates.apply_update(zip_path, current_exe,
+                                                 relaunch=False)
+            self.assertIsNotNone(helper)
+            script = Path(helper).read_text(encoding="utf-8")
+            self.assertIn(str(app_dir), script)
+
+    def test_bad_zip_is_refused(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            bad = Path(folder) / "app.zip"
+            bad.write_bytes(b"not a zip")
+            self.assertIsNone(ui_updates.apply_update(
+                bad, Path(folder) / "ScreenShotTool.exe"))
+
+    def test_cleanup_removes_the_old_folder_after_a_swap(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            app_dir = Path(folder) / "ScreenShotTool"
+            old_dir = Path(folder) / "ScreenShotTool.old"
+            old_dir.mkdir()
+            (old_dir / "junk.txt").write_text("old")
+            exe = str(app_dir / "ScreenShotTool.exe")
+            with mock.patch.object(sys, "frozen", True, create=True), \
+                    mock.patch.object(sys, "executable", exe):
+                ui_updates.cleanup_old_app_dir()
+            self.assertFalse(old_dir.exists())
+        # Running from source never touches anything.
+        ui_updates.cleanup_old_app_dir()
+
+
 if __name__ == "__main__":
     unittest.main()

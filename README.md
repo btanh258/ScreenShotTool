@@ -24,7 +24,7 @@ ScreenShotTool là công cụ chụp màn hình cho Windows, viết bằng Pytho
 
 ## Tải bản EXE
 
-Bản chạy độc lập nằm ở tab **[Releases](../../releases/latest)** của repository, file `ScreenShotTool.exe` (one-file, ~72 MB, build từ đúng mã nguồn này). Bản mới nhất hiện là **v1.4.1**.
+Bản chạy độc lập nằm ở tab **[Releases](../../releases/latest)** của repository: file `ScreenShotTool-<phiên bản>.zip` chứa thư mục app (dạng onedir, nên dùng) hoặc file `ScreenShotTool.exe` 1 file. Bản mới nhất hiện là **v1.4.2**.
 
 Tải file EXE về máy Windows rồi chạy trực tiếp. Không cần cài Python hoặc các thư viện trong `requirements.txt`. Windows SmartScreen có thể hiển thị cảnh báo vì file chưa được ký số; đây là binary phát hành nội bộ từ repository này.
 
@@ -265,6 +265,7 @@ Xem [`CHANGELOG.md`](CHANGELOG.md) để có danh sách đầy đủ — mỗi b
 
 | Phiên bản | Thay đổi chính |
 |---|---|
+| **v1.4.2** | Sửa lỗi DLL sau cập nhật bằng cách chuyển sang dạng thư mục app (onedir); file exe 1 file chỉ còn làm cầu nối cho bản cũ cập nhật lên |
 | **v1.4.1** | Tone nâu theo màu icon thay cho tone xanh; sửa Ctrl+Z hoàn tác 2 bước, phím editor F/Delete làm editor không mở được, lỗi sau bước chụp kẹt chế độ chụp, chụp hẹn giờ không hủy được, tải cập nhật không kiểm tra file đủ không |
 | **v1.4.0** | Toast không còn lệch nút Ghim; tự tải và thay thế bản cũ khi cập nhật; bút/dạ quang bấm một lần vẽ được chấm tròn; hoàn tác không còn mất object khi vượt giới hạn (nâng lên 200 bước và giữ bản gốc) |
 | v1.3.0 | Đổi giao diện sáng/tối ngay trong editor; sửa hộp thoại Giới thiệu không hiện khi mở từ khay |

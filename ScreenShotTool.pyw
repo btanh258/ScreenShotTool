@@ -86,7 +86,7 @@ except AttributeError:
     RESAMPLE = Image.LANCZOS
 
 APP_NAME = "ScreenShotTool"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Where the config lives.
@@ -2555,7 +2555,7 @@ def _retint_open_editors(exclude=None):
 
 
 def _install_update(root, icon, release, tag, quit_app,
-                    downloader=None, applier=None):
+                    downloader=None, applier=None, force_zip=False):
     """Download the new build and hand it to the swap helper.
 
     Runs off the UI thread. The swap is delegated to a helper script because
@@ -2566,15 +2566,18 @@ def _install_update(root, icon, release, tag, quit_app,
 
     ``downloader`` and ``applier`` exist so the wiring can be tested without a
     network, and ``quit_app`` so a test does not have to exit its own process.
+    ``force_zip`` downloads the onedir zip even on a onefile build: the offer
+    to switch packaging when the user is already on the latest version.
     """
     downloader = downloader or ui_updates.download_asset
     applier = applier or ui_updates.apply_update
 
-    url = ui_updates.pick_update_asset(release)
+    url = (ui_updates.pick_update_zip(release) if force_zip
+           else ui_updates.pick_update_asset(release))
     if not url:
         root.after(0, lambda: messagebox.showinfo(
             "Cập nhật",
-            "Bản phát hành %s không kèm tệp .exe để tải." % tag, parent=root))
+            "Bản phát hành %s không kèm tệp cập nhật để tải." % tag, parent=root))
         return False
 
     try:
@@ -2583,8 +2586,9 @@ def _install_update(root, icon, release, tag, quit_app,
         logging.debug("Tray notification unavailable", exc_info=True)
 
     safe_tag = tag.strip().lstrip("vV") or "update"
+    suffix = "zip" if url.lower().endswith(".zip") else "exe"
     destination = os.path.join(tempfile.gettempdir(),
-                               "ScreenShotTool-%s.exe" % safe_tag)
+                               "ScreenShotTool-%s.%s" % (safe_tag, suffix))
     logging.info("Downloading update %s from %s", tag, url)
     downloaded = downloader(url, destination)
 
@@ -2825,6 +2829,8 @@ def main():
     _root_ref = root
     root.iconbitmap(resource_path("icon_ScreenShotTool.ico"))
     logging.info("%s %s starting (config: %s)", APP_NAME, APP_VERSION, CONFIG_FILE)
+    # Dọn thư mục <appdir>.old còn lại sau một lần cập nhật đổi thư mục app.
+    ui_updates.cleanup_old_app_dir()
     # Applied before any widget exists: colours are read at construction, so a
     # palette change after this point would only affect newly created widgets.
     active_theme = T.set_theme(T.resolve_theme(load_config().get("theme", "system")))
@@ -2868,6 +2874,26 @@ def main():
                     return
                 tag = release.get("tag") or "(không rõ)"
                 if not ui_updates.is_newer(tag, current):
+                    # Đã là bản mới nhất nhưng vẫn chạy dạng 1 file exe: đề
+                    # nghị chuyển sang dạng thư mục app, vì dạng 1 file hay
+                    # bị lỗi DLL ngay sau khi cập nhật (Defender chặn DLL vừa
+                    # giải nén ra %TEMP%). Chỉ hỏi khi release có file zip.
+                    if (ui_updates.can_self_update()
+                            and ui_updates.is_onefile_build()
+                            and ui_updates.pick_update_zip(release)):
+                        answer = messagebox.askyesno(
+                            "Chuyển sang dạng thư mục app",
+                            "Bạn đang dùng bản mới nhất (%s), nhưng bản này vẫn chạy dạng 1 file exe — dạng này hay bị lỗi DLL ngay sau khi cập nhật.\n\n"
+                            "Chuyển sang dạng thư mục app (cài vào %%LOCALAPPDATA%%\\ScreenShotTool, không còn lỗi này) ngay bây giờ?"
+                            % current,
+                            parent=root)
+                        if answer:
+                            threading.Thread(
+                                target=_install_update,
+                                args=(root, icon, release, tag, quit_for_update),
+                                kwargs={"force_zip": True},
+                                daemon=True).start()
+                        return
                     messagebox.showinfo(
                         "Kiểm tra cập nhật",
                         "Bạn đang dùng bản mới nhất (%s)." % current,

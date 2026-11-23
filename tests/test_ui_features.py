@@ -947,6 +947,29 @@ class UpdateWiringTests(unittest.TestCase):
         self.assertEqual(apply_calls[0][0][1], sys.executable)
         error.assert_not_called()
 
+    def test_force_zip_downloads_the_onedir_zip(self):
+        download_calls, downloader = self._recorder("C:/tmp/new.zip")
+        apply_calls, applier = self._recorder("C:/tmp/helper.bat")
+        release = {"tag": "v9.9.9", "url": "https://example/tag", "assets": [
+            {"name": "ScreenShotTool.exe", "url": "https://example/app"},
+            {"name": "ScreenShotTool-9.9.9.zip",
+             "url": "https://example/app.zip"}]}
+        quit_calls = []
+        with mock.patch.object(self.app.messagebox, "showerror") as error:
+            started = self.app._install_update(
+                self.root, self.icon, release, "v9.9.9",
+                lambda: quit_calls.append(True),
+                downloader=downloader, applier=applier, force_zip=True)
+            for _ in range(8):
+                self.root.update()
+        self.assertTrue(started)
+        self.assertTrue(quit_calls)
+        self.assertEqual(download_calls[0][0][0], "https://example/app.zip",
+                         "the switch-to-onedir offer must download the zip, "
+                         "not the exe bridge")
+        self.assertTrue(download_calls[0][0][1].endswith(".zip"))
+        error.assert_not_called()
+
     def test_download_progress_is_announced(self):
         _calls, downloader = self._recorder("C:/tmp/new.exe")
         _a, applier = self._recorder("C:/tmp/helper.bat")

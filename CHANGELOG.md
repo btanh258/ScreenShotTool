@@ -7,6 +7,18 @@ phiên bản theo [Semantic Versioning](https://semver.org/lang/vi/).
 
 _(chưa có thay đổi)_
 
+## [1.4.2] — 2026-11-24
+
+### Sửa lỗi
+
+- **Lỗi DLL ngay sau khi cập nhật (báo lại sau 1.4.1, giống YouTube Downloader).** Nguyên nhân gốc: bản 1 file exe tự giải nén `python311.dll` ra `%TEMP%\_MEI*` mỗi lần mở app; script cập nhật mở exe mới lên ngay sau khi thay file, đúng lúc Defender đang quét DLL vừa giải nén nên bootloader không tải được DLL. Đợi vài giây không sửa được vì Defender quét DLL lúc giải nén, tức là SAU khi mở app. Sửa triệt để: đổi sang dạng thư mục app (onedir) — `python311.dll` + các DLL nằm cạnh exe trong thư mục app, không còn bước giải nén ra `%TEMP%` nên lỗi này không thể xảy ra; người dùng tải file zip về, giải nén, chạy exe trong thư mục `ScreenShotTool`.
+- **Tự cập nhật đổi theo dạng thư mục app.** Bản onedir tải file zip về, giải nén trong lúc bản cũ vẫn chạy (Defender có thời gian quét DLL trước khi exe mới được mở), rồi script phụ đổi cả thư mục app (thư mục cũ đổi tên `.old`, bản mới mở lên được sẽ tự xóa). File cấu hình không bị ảnh hưởng vì đã nằm ở `%APPDATA%`.
+- **Cầu nối cho bản 1 file cũ.** Bản 1.4.1 chỉ biết tải file exe, mà release 1.4.2 chỉ có file zip thì nó không cập nhật được — nên release 1.4.2 kèm cả file zip onedir và file exe 1 file (cùng code 1.4.2): bản 1.4.1 bấm cập nhật tải exe cầu nối về trước, rồi bấm cập nhật thêm 1 lần nữa thì bản cầu nối hỏi chuyển sang dạng thư mục app. Từ đó về sau cập nhật bình thường bằng file zip.
+
+### Kiểm thử
+
+- Thêm test cho: nhận diện dạng build 1 file/onedir, chọn đúng asset (exe hay zip) theo dạng build, giải nén zip + đổi thư mục app (cả trường hợp cài mới vào `%LOCALAPPDATA%` và thay tại chỗ), từ chối zip hỏng, dọn thư mục `.old` sau khi đổi, và `_install_update(force_zip=True)` tải đúng file zip.
+
 ## [1.4.1] — 2026-11-24
 
 ### Thay đổi
@@ -129,7 +141,8 @@ _(chưa có thay đổi)_
 - Bản phát hành đầu tiên: chụp màn hình bằng `Alt+X`, nhận diện cửa sổ/vùng UI, sao
   chép clipboard, editor có annotation, tray icon, khởi động cùng Windows.
 
-[Chưa phát hành]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.1...HEAD
+[Chưa phát hành]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/btanh258/ScreenShotTool/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/btanh258/ScreenShotTool/compare/v1.2.1...v1.3.0
