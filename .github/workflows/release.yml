@@ -1,6 +1,6 @@
 name: release
 
-# Builds the single-file exe and attaches it to a GitHub Release.
+# Builds the app and attaches it to a GitHub Release.
 #
 # Two ways to trigger it:
 #   * push a tag like v1.1.1
@@ -10,7 +10,18 @@ name: release
 # release can no longer be published while the tests are failing - that is
 # exactly how v1.0.0 went out with 3 red tests.
 #
-# Code signing is optional and wired but disabled: see the "Sign the exe" step.
+# Two artifacts since v1.4.2, because the onefile build kept failing with a DLL
+# error on first launch after an update (Defender blocks python311.dll while it
+# is being extracted to %TEMP%\_MEI* at launch time):
+#   * ScreenShotTool-<tag>.zip - the onedir build, the real distribution:
+#     python311.dll sits next to the exe, so there is no extraction step and
+#     the error cannot happen. The in-app updater installs this one.
+#   * ScreenShotTool.exe - the same code as a onefile build, kept only as a
+#     bridge so an old onefile install can update to v1.4.2 at all (it only
+#     knows how to download an exe). Once on v1.4.2 it offers the switch to
+#     the onedir layout.
+#
+# Code signing is optional and wired but disabled: see the "Sign the exes" step.
 # Without a certificate the build still publishes, just unsigned.
 
 on:
@@ -38,6 +49,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -64,7 +85,23 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build single-file exe
+      - name: Build the onedir app
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed `
+            --name ScreenShotTool `
+            --icon icon_ScreenShotTool.ico `
+            --add-data "icon_ScreenShotTool.ico;." `
+            --collect-submodules pystray --collect-submodules PIL `
+            --hidden-import win32clipboard --hidden-import win32gui `
+            --hidden-import win32con --hidden-import win32api `
+            --hidden-import pystray._win32 --hidden-import keyboard `
+            --hidden-import cv2 --hidden-import numpy `
+            --hidden-import ui_editor_io --hidden-import ui_updates `
+            --hidden-import ui_extras `
+            --exclude-module matplotlib --exclude-module pytest `
+            ScreenShotTool.pyw
+
+      - name: Build the onefile bridge exe
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed `
             --name ScreenShotTool `
@@ -80,32 +117,50 @@ jobs:
             --exclude-module matplotlib --exclude-module pytest `
             ScreenShotTool.pyw
 
-      - name: Verify every project module is inside the exe
+      - name: Package the onedir build
+        shell: pwsh
+        run: |
+          $zip = "ScreenShotTool-${{ steps.tag.outputs.name }}.zip"
+          Compress-Archive -Path dist\ScreenShotTool -DestinationPath "dist\$zip"
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Packaged dist\$zip"
+        id: package
+
+      - name: Verify every project module is inside both builds
         shell: pwsh
         run: |
           # A missing --hidden-import does not fail the build: PyInstaller just
           # omits the module and the exe crashes with ModuleNotFoundError at the
           # first use. ui_extras was in exactly that state, so assert it here
           # rather than discovering it when a user clicks "Anh gan day".
+          # The onefile exe carries its archive inside itself; the onedir build
+          # keeps PYZ.pyz as a file under _internal.
           python -m pip install --quiet pyinstaller
           python -c @'
           import os, sys, tempfile
           from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
-          arc = CArchiveReader("dist/ScreenShotTool.exe")
-          tmp = os.path.join(tempfile.gettempdir(), "pyz.pyz")
-          with open(tmp, "wb") as fh:
-              fh.write(arc.extract("PYZ.pyz"))
-          toc = ZlibArchiveReader(tmp).toc
-          os.remove(tmp)
+          def toc_onefile(exe_path):
+              arc = CArchiveReader(exe_path)
+              tmp = os.path.join(tempfile.gettempdir(), "pyz_onefile.pyz")
+              with open(tmp, "wb") as fh:
+                  fh.write(arc.extract("PYZ.pyz"))
+              toc = ZlibArchiveReader(tmp).toc
+              os.remove(tmp)
+              return toc
+          def toc_onedir(pyz_path):
+              return ZlibArchiveReader(pyz_path).toc
           required = ["ui_extras", "ui_editor_io", "ui_updates", "ui_theme",
                       "ui_widgets", "ui_capture", "ui_dialogs"]
-          missing = [name for name in required if name not in toc]
-          if missing:
-              sys.exit("missing from the exe: " + ", ".join(missing))
-          print("all %d project modules bundled" % len(required))
+          for label, toc in (
+                  ("onefile", toc_onefile("dist/ScreenShotTool.exe")),
+                  ("onedir", toc_onedir(r"dist\ScreenShotTool\_internal\PYZ.pyz"))):
+              missing = [name for name in required if name not in toc]
+              if missing:
+                  sys.exit("missing from the %s build: %s" % (label, ", ".join(missing)))
+              print("all %d project modules bundled in the %s build" % (len(required), label))
           '@
 
-      - name: Sign the exe
+      - name: Sign the exes
         if: steps.signing.outputs.present == 'true'
         env:
           SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
@@ -125,74 +180,75 @@ jobs:
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) { throw "signtool.exe not found in the Windows SDK" }
 
-          & $signtool.FullName sign /f $pfx /p $env:SIGNING_CERT_PASSWORD `
-            /tr http://timestamp.digicert.com /td sha256 /fd sha256 `
-            dist\ScreenShotTool.exe
-          if ($LASTEXITCODE -ne 0) { throw "signtool failed with $LASTEXITCODE" }
+          foreach ($exe in @("dist\ScreenShotTool.exe", "dist\ScreenShotTool\ScreenShotTool.exe")) {
+            & $signtool.FullName sign /f $pfx /p $env:SIGNING_CERT_PASSWORD `
+              /tr http://timestamp.digicert.com /td sha256 /fd sha256 `
+              $exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed with $LASTEXITCODE for $exe" }
+            $check = Get-AuthenticodeSignature $exe
+            Write-Host "$exe signature status: $($check.Status)"
+            if ($check.Status -ne 'Valid') { throw "The built exe $exe did not end up validly signed." }
+          }
 
           Remove-Item $pfx -Force
-          $check = Get-AuthenticodeSignature dist\ScreenShotTool.exe
-          Write-Host "Signature status: $($check.Status)"
-          if ($check.Status -ne 'Valid') { throw "The built exe did not end up validly signed." }
 
       - name: Report signature status
         shell: pwsh
         run: |
-          $sig = Get-AuthenticodeSignature dist\ScreenShotTool.exe
-          Write-Host "Authenticode: $($sig.Status)"
-          if ($sig.Status -ne 'Valid') {
-            Write-Warning ("This build is unsigned, so Windows SmartScreen will warn " +
-                           "on first run. Add SIGNING_CERT_BASE64 and " +
-                           "SIGNING_CERT_PASSWORD to sign automatically.")
+          foreach ($exe in @("dist\ScreenShotTool.exe", "dist\ScreenShotTool\ScreenShotTool.exe")) {
+            $sig = Get-AuthenticodeSignature $exe
+            Write-Host "$exe Authenticode: $($sig.Status)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Warning ("This build is unsigned, so Windows SmartScreen will warn " +
+                             "on first run. Add SIGNING_CERT_BASE64 and " +
+                             "SIGNING_CERT_PASSWORD to sign automatically.")
+            }
           }
 
-      - name: Smoke-test the binary
-        # A build that cannot start is worthless even if the tests pass, so the
+      - name: Smoke-test both binaries
+        # A build that cannot start is worthless even if the tests pass, so each
         # produced exe must survive ten seconds in a real process.
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath ".\dist\ScreenShotTool.exe" -PassThru -WindowStyle Hidden
-          Start-Sleep -Seconds 10
-          if ($p.HasExited) {
-            Write-Error "The built exe exited immediately (code $($p.ExitCode))."
-            exit 1
+          foreach ($exe in @(".\dist\ScreenShotTool.exe", ".\dist\ScreenShotTool\ScreenShotTool.exe")) {
+            $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+            Start-Sleep -Seconds 10
+            if ($p.HasExited) {
+              Write-Error "The built exe $exe exited immediately (code $($p.ExitCode))."
+              exit 1
+            }
+            Stop-Process -Id $p.Id -Force
+            Write-Host "$exe started and stayed alive."
           }
-          Stop-Process -Id $p.Id -Force
-          Write-Host "The exe started and stayed alive."
 
-      - name: Record the build checksum
+      - name: Record the build checksums
         shell: pwsh
         run: |
-          $hash = (Get-FileHash dist\ScreenShotTool.exe -Algorithm SHA256).Hash
-          $size = (Get-Item dist\ScreenShotTool.exe).Length
-          Write-Host "SHA256: $hash"
-          Write-Host "Size:   $size bytes"
-          # Published alongside the exe so a downloader can verify what they got.
-          Set-Content -Path dist\SHA256SUMS.txt -Value "$hash  ScreenShotTool.exe" -Encoding ascii
+          $zip = "${{ steps.package.outputs.zip }}"
+          $lines = @()
+          foreach ($file in @("ScreenShotTool.exe", $zip)) {
+            $hash = (Get-FileHash "dist\$file" -Algorithm SHA256).Hash
+            $size = (Get-Item "dist\$file").Length
+            Write-Host "$file SHA256: $hash ($size bytes)"
+            $lines += "$hash  $file"
+          }
+          # Published alongside the binaries so a downloader can verify what they got.
+          Set-Content -Path dist\SHA256SUMS.txt -Value $lines -Encoding ascii
 
-      - name: Determine release tag
-        id: tag
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish release with the exe attached
+      - name: Publish release with both builds attached
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.name }}
+          ZIP: ${{ steps.package.outputs.zip }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            # Re-running for an existing tag must replace the asset, not fail.
-            gh release upload "$TAG" dist/ScreenShotTool.exe dist/SHA256SUMS.txt \
+            # Re-running for an existing tag must replace the assets, not fail.
+            gh release upload "$TAG" dist/ScreenShotTool.exe "dist/$ZIP" dist/SHA256SUMS.txt \
               --repo "${{ github.repository }}" --clobber
           else
-            gh release create "$TAG" dist/ScreenShotTool.exe dist/SHA256SUMS.txt \
+            gh release create "$TAG" dist/ScreenShotTool.exe "dist/$ZIP" dist/SHA256SUMS.txt \
               --repo "${{ github.repository }}" \
               --title "$TAG" \
               --generate-notes
