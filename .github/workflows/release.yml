@@ -126,6 +126,15 @@ jobs:
           Write-Host "Packaged dist\$zip"
         id: package
 
+      - name: List the build outputs
+        shell: pwsh
+        run: |
+          python -m PyInstaller --version
+          Write-Host "--- .pyz files under dist ---"
+          Get-ChildItem -Recurse -Filter *.pyz dist | ForEach-Object { $_.FullName }
+          Write-Host "--- onedir build tree ---"
+          Get-ChildItem -Recurse dist\ScreenShotTool | ForEach-Object { $_.FullName }
+
       - name: Verify every project module is inside both builds
         shell: pwsh
         run: |
@@ -134,9 +143,10 @@ jobs:
           # first use. ui_extras was in exactly that state, so assert it here
           # rather than discovering it when a user clicks "Anh gan day".
           # The onefile exe carries its archive inside itself; the onedir build
-          # keeps a PYZ archive as a file under _internal. Its name varies by
-          # PyInstaller version (PYZ-00.pyz in PyInstaller 6, PYZ.pyz in
-          # older versions), so locate it instead of hard-coding the name.
+          # keeps a PYZ archive as a file somewhere under its folder. Its name
+          # and location vary by PyInstaller version (PYZ-00.pyz under
+          # _internal in PyInstaller 6, PYZ.pyz in older versions), so locate
+          # it by a recursive search instead of hard-coding the name.
           python -m pip install --quiet pyinstaller
           python -c @'
           import glob, os, sys, tempfile
@@ -151,10 +161,9 @@ jobs:
               return toc
           def toc_onedir(pyz_path):
               return ZlibArchiveReader(pyz_path).toc
-          onedir_pyz = (glob.glob(r"dist\ScreenShotTool\_internal\PYZ*.pyz")
-                        or glob.glob(r"dist\ScreenShotTool\PYZ*.pyz"))
+          onedir_pyz = glob.glob(r"dist\ScreenShotTool\**\*.pyz", recursive=True)
           if not onedir_pyz:
-              sys.exit("no PYZ archive found in the onedir build under dist\\ScreenShotTool")
+              sys.exit("no PYZ archive found anywhere under dist\\ScreenShotTool")
           print("onedir PYZ archive: %s" % onedir_pyz[0])
           required = ["ui_extras", "ui_editor_io", "ui_updates", "ui_theme",
                       "ui_widgets", "ui_capture", "ui_dialogs"]
