@@ -7,6 +7,16 @@ phiên bản theo [Semantic Versioning](https://semver.org/lang/vi/).
 
 _(chưa có thay đổi)_
 
+## [1.4.3] — 2026-11-24
+
+### Thay đổi
+
+- Hộp thoại Giới thiệu thêm dòng **"GitHub: github.com/btanh258/ScreenShotTool"** bấm được ngay dưới dòng mô tả — bấm mở trang repo bằng trình duyệt.
+
+### Kiểm thử
+
+- Thêm test: hộp thoại Giới thiệu có link GitHub (con trỏ tay), bấm vào mở đúng URL của repo.
+
 ## [1.4.2] — 2026-11-24
 
 ### Sửa lỗi
@@ -141,7 +151,8 @@ _(chưa có thay đổi)_
 - Bản phát hành đầu tiên: chụp màn hình bằng `Alt+X`, nhận diện cửa sổ/vùng UI, sao
   chép clipboard, editor có annotation, tray icon, khởi động cùng Windows.
 
-[Chưa phát hành]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.2...HEAD
+[Chưa phát hành]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.3...HEAD
+[1.4.3]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/btanh258/ScreenShotTool/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/btanh258/ScreenShotTool/compare/v1.3.0...v1.4.0

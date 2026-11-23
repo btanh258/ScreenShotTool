@@ -20,8 +20,10 @@ composite controls come from :mod:`ui_widgets`.  No hard-coded colours.
 
 from __future__ import annotations
 
+import logging
 import tkinter as tk
 from tkinter import ttk
+import webbrowser
 
 import ui_theme as T
 import ui_widgets as U
@@ -81,6 +83,26 @@ def _text(master, text, *, surface, color, fontspec, **pack):
                      anchor="w", justify="left")
     if pack:
         label.pack(**pack)
+    return label
+
+
+GITHUB_URL = "https://github.com/btanh258/ScreenShotTool"
+
+
+def _open_link(url):
+    """Open ``url`` in the user's browser; never raise on failure."""
+    try:
+        webbrowser.open(url)
+    except Exception:
+        logging.exception("Could not open %s", url)
+
+
+def _link(master, text, *, surface, fontspec, command):
+    """Themed clickable link label: accent colour, underlined, hand cursor."""
+    label = tk.Label(master, text=text, bg=surface, fg=T.COLORS.accent,
+                     font=tuple(fontspec) + ("underline",), anchor="w",
+                     justify="left", cursor="hand2")
+    label.bind("<Button-1>", lambda event: command())
     return label
 
 
@@ -342,6 +364,9 @@ def open_info_dialog(parent, config, *, on_open_hotkeys=None, app_version=None):
     ttk.Label(titles, text=title_text, style=T.STYLE_TITLE_LABEL).pack(anchor="w")
     ttk.Label(titles, text="Chụp, chú thích và xuất ảnh trong vài giây.",
               style=T.STYLE_SUBTITLE_LABEL).pack(anchor="w", pady=(2, 0))
+    _link(titles, "GitHub: github.com/btanh258/ScreenShotTool",
+          surface=app, fontspec=T.FONTS.tiny,
+          command=lambda: _open_link(GITHUB_URL)).pack(anchor="w", pady=(2, 0))
 
     filter_var = tk.StringVar(value="all")
     U.SegmentedControl(

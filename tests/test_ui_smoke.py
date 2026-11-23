@@ -309,6 +309,35 @@ class DialogModuleTests(_TkTestCase):
             dialog.destroy()
             self.drain()
 
+    def test_info_dialog_shows_a_clickable_github_link(self):
+        dialog = ui_dialogs.open_info_dialog(self.root, dict(self.CONFIG))
+        self.drain()
+        try:
+            link = None
+
+            def walk(widget):
+                nonlocal link
+                try:
+                    text = str(widget.cget("text"))
+                except Exception:
+                    text = ""
+                if text.startswith("GitHub:"):
+                    link = widget
+                    return
+                for child in widget.winfo_children():
+                    walk(child)
+
+            walk(dialog)
+            self.assertIsNotNone(link, "the info dialog must show the GitHub link")
+            self.assertEqual(link.cget("cursor"), "hand2")
+            with mock.patch.object(ui_dialogs.webbrowser, "open") as browser:
+                link.event_generate("<Button-1>")
+                self.drain()
+            browser.assert_called_once_with(ui_dialogs.GITHUB_URL)
+        finally:
+            dialog.destroy()
+            self.drain()
+
     def test_hotkey_dialog_constructs_and_destroys(self):
         saved = []
         dialog = ui_dialogs.open_hotkey_dialog(self.root, dict(self.CONFIG),
